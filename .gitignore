@@ -12,6 +12,7 @@ __pycache__/
 #data
 data/
 sujet/
+src/sandbox.py
 
 # Distribution / packaging
 .Python
