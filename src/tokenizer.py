@@ -16,7 +16,6 @@ def notes_to_tokens(notes,
                     max_pitch=MAX_PITCH,
                     max_dur=MAX_DUR,
                     max_rest=MAX_REST):
-    
     if not notes:
         return None
     
@@ -24,12 +23,9 @@ def notes_to_tokens(notes,
     current_time = 0.0
 
     for note in notes:
-
         pitch = note.pitch
-
         if pitch < min_pitch or pitch > max_pitch:
             continue
-
         rest = note.start - current_time
         rest_steps = int(round(rest / time_step))
         if rest_steps > 0:
@@ -50,7 +46,7 @@ def notes_to_tokens(notes,
 
     return tokens
 
-def teokenize_all_midis(input_dir):
+def tokenize_all_midis(input_dir, max_files=None):
     all_tokens = []
     for root, _, files in os.walk(input_dir):
         for file in tqdm.tqdm(files):
@@ -60,6 +56,8 @@ def teokenize_all_midis(input_dir):
                 tokens = notes_to_tokens(mono_note)
                 if tokens is not None:
                     all_tokens.append(tokens)
+            if max_files is not None and len(all_tokens) >= max_files:
+                break
     return all_tokens
 
 def build_vocab():
@@ -79,11 +77,11 @@ def encode_tokens(tokens, token_to_id):
 def encode_tokens_list(tokens_list, token_to_id):
     return [encode_tokens(tokens, token_to_id) for tokens in tokens_list]
 
-def make_training_examples(encoded_sequences, seq_length=128):
+def make_training_examples(encoded_sequences, seq_length=128, stride=1):
     inputs = []
     targets = []
-    for seq in encoded_sequences:
-        for i in range(len(seq) - seq_length):
+    for seq in tqdm.tqdm(encoded_sequences, desc="Creating training examples"):
+        for i in range(0, len(seq) - seq_length, stride):
             inputs.append(seq[i:i+seq_length])
             targets.append(seq[i+1:i+seq_length+1])
     return inputs, targets
@@ -104,10 +102,17 @@ def save_vocab(token_to_id, id_to_token, output_path):
         json.dump(id_to_token, f, indent=2)
     print(f"ID to Token mapping saved to {output_path}_id_to_token.json")
 
-if __name__ == "__main__":
-    all_tokens = teokenize_all_midis("data/test_mono")
+def create_vocab_and_dataset(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1):
+    all_tokens = tokenize_all_midis(input_dir, max_files=max_files)
+    print(f"Tokenized {len(all_tokens)} MIDI files")
     vocab, token_to_id, id_to_token = build_vocab()
+    print(f"Vocabulary size: {len(vocab)}")
     encoded = encode_tokens_list(all_tokens, token_to_id)
-    inputs, targets = make_training_examples(encoded)
-    save_dataset(inputs, targets, "data/processed/dataset.pt")
-    save_vocab(token_to_id, id_to_token, "data/processed/vocab")
+    print("Encoded tokens into integer IDs")
+    inputs, targets = make_training_examples(encoded, seq_length=seq_length, stride=stride)
+    print(f"Created {len(inputs)} training examples")
+    save_dataset(inputs, targets, dataset_output_path)
+    save_vocab(token_to_id, id_to_token, vocab_output_path)
+
+if __name__ == "__main__":
+    create_vocab_and_dataset("data/midi_mono", "data/processed/dataset.pt", "data/processed/vocab", max_files=1000, seq_length=128, stride=8)
