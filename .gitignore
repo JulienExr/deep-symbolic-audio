@@ -12,6 +12,9 @@ data/
 sujet/
 src/sandbox.py
 
+models/
+outputs/
+
 # Distribution / packaging
 .Python
 build/
