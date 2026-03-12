@@ -14,6 +14,7 @@ src/sandbox.py
 
 models/
 outputs/
+checkpoints/
 
 # Distribution / packaging
 .Python
