@@ -18,5 +18,7 @@ class MusicDataset(Dataset):
 def load_dataloaders(dataset_path, batch_size=32, shuffle=True):
     data = torch.load(dataset_path)
     dataset = MusicDataset(data["inputs"], data["targets"])
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle,
+                            num_workers=4, pin_memory=True, persistent_workers=True
+                            )
     return dataloader

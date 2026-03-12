@@ -75,3 +75,13 @@ def load_mono_note(midi_path):
         notes.extend(instrument.notes)
     notes.sort(key=lambda n: n.start)
     return notes
+
+def load_polyphonic_notes(midi_path):
+    midi = pretty_midi.PrettyMIDI(midi_path)
+    notes = []
+    for instrument in midi.instruments:
+        if instrument.is_drum:
+            continue
+        notes.extend(instrument.notes)
+    notes.sort(key=lambda n: n.start)
+    return notes
