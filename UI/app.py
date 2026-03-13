@@ -90,6 +90,7 @@ with left_col:
 
     max_tokens = st.slider("Nombre max de tokens", min_value=32, max_value=512, value=200, step=8)
     temperature = st.slider("Température", min_value=0.1, max_value=1.5, value=0.8, step=0.1)
+    top_k = st.slider("Top-k", min_value=1, max_value=64, value=10, step=1)
     device = resolve_device()
 
     generate_button = st.button("Générer", type="primary", use_container_width=True)
@@ -109,6 +110,7 @@ if generate_button:
             checkpoint_path=str(checkpoint_path),
             max_tokens=max_tokens,
             temperature=temperature,
+            top_k=top_k,
             tokenizer_mode=effective_tokenizer_mode,
             device=device,
         )
