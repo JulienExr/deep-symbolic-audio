@@ -28,11 +28,13 @@ Notes :
 
 ## Structure du projet
 
-- `main.py` : point d'entrée CLI pour `train`, `generate` et `fine-tune`
+- `main.py` : point d'entrée CLI
+- `src/project_cli.py` : orchestration des commandes `preprocess`, `train`, `generate` et `fine-tune`
 - `src/tokenizer.py` : création des vocabulaires et des datasets à partir des MIDI
 - `src/train.py` : boucles d'entraînement LSTM et Transformer
 - `src/fine_tune.py` : adaptation d'un checkpoint à un nouveau vocabulaire
 - `src/generate.py` : génération de tokens, conversion MIDI et rendu audio
+- `src/metrics.py` : rapports JSON/CSV pour l'entraînement, le fine-tuning et la génération
 - `UI/app.py` : interface Streamlit
 
 ## Modes de tokenisation
@@ -43,25 +45,42 @@ Notes :
 
 ## Préparation des données
 
-Les fonctions de préparation sont dans `src/tokenizer.py` :
+La préparation des datasets est maintenant exposée dans la CLI via `main.py preprocess`. Les fonctions sous-jacentes restent dans `src/tokenizer.py`.
 
-- `create_vocab_and_dataset(...)` pour le mode `mono`
-- `create_vocab_and_dataset_polyphonic(...)` pour le mode `poly`
-- `create_vocab_and_dataset_emopia(...)` pour le mode `emopia`
+Commande générale :
+
+```bash
+python main.py preprocess --tokenizer-mode <mono|poly|emopia>
+```
+
+Exemples :
+
+```bash
+python main.py preprocess --tokenizer-mode mono
+```
+
+```bash
+python main.py preprocess \
+  --tokenizer-mode poly \
+  --input-dir data/midi_poly \
+  --dataset-output data/processed/dataset_poly.pt \
+  --vocab-output data/processed/vocab_poly \
+  --max-files 1200 \
+  --seed 42
+```
+
+```bash
+python main.py preprocess \
+  --tokenizer-mode emopia \
+  --input-dir data/midi_emopia \
+  --dataset-output data/processed/dataset_emopia.pt \
+  --vocab-output data/processed/vocab_emopia
+```
 
 Sorties générées :
 
 - dataset(s) `.pt` dans `data/processed/`
 - vocabulaires JSON `*_token_to_id.json` et `*_id_to_token.json`
-
-- le bloc `if __name__ == "__main__"` de `src/tokenizer.py` est actuellement configuré pour générer le dataset `emopia`
-- pour préparer un autre dataset, il faut modifier/décommenter l'appel voulu dans ce fichier avant de lancer la commande
-
-Exécution :
-
-```bash
-python src/tokenizer.py
-```
 
 Comportement actuel par mode :
 
@@ -69,12 +88,23 @@ Comportement actuel par mode :
 - `poly` : produit un split train/validation, par exemple `dataset_poly_train.pt` et `dataset_poly_val.pt`
 - `emopia` : produit aussi un split train/validation, par exemple `dataset_emopia_train.pt` et `dataset_emopia_val.pt`
 
+Valeurs par défaut utiles :
+
+- `mono` : `input_dir=data/midi_mono`, `dataset_output=data/processed/dataset.pt`, `vocab_output=data/processed/vocab`
+- `poly` : `input_dir=data/midi_poly`, `dataset_output=data/processed/dataset_poly.pt`, `vocab_output=data/processed/vocab_poly`
+- `emopia` : `input_dir=data/midi_emopia`, `dataset_output=data/processed/dataset_emopia.pt`, `vocab_output=data/processed/vocab_emopia`
+
+Notes :
+
+- `--seq-length` et `--stride` peuvent être surchargés depuis la CLI
+- `--seed` contrôle l'ordre des fichiers et le split train/validation pour obtenir un préprocessing reproductible
+
 ## Entraînement
 
 Commande générale :
 
 ```bash
-python main.py train --model <lstm|transformer> --tokenizer-mode <mono|poly> --dataset <dataset.pt>
+python main.py train --model <lstm|transformer> --tokenizer-mode <mono|poly|emopia> --dataset <dataset.pt>
 ```
 
 Exemples :
@@ -91,15 +121,22 @@ python main.py train \
   --val-dataset data/processed/dataset_poly_val.pt
 ```
 
-Limite actuelle :
-
-- `main.py train` n'expose aujourd'hui que `mono` et `poly` ; pour un vocabulaire émotionnel `emopia`, le flux actuel passe plutôt par le fine-tuning ou par un appel direct aux fonctions Python
+```bash
+python main.py train \
+  --model transformer \
+  --tokenizer-mode emopia \
+  --dataset data/processed/dataset_emopia_train.pt \
+  --val-dataset data/processed/dataset_emopia_val.pt \
+  --seed 42
+```
 
 Sorties d'entraînement :
 
 - checkpoints dans `models/lstm/` ou `models/transformer/`
 - modèle final sous la forme `models/<model>/<model>_<mode>_final.pt`
-- pour le Transformer, courbes de loss sauvegardées en PNG dans `models/transformer/`
+- courbe de loss sauvegardée en PNG dans `models/<model>/`
+- rapport JSON `models/<model>/<model>_<mode>_metrics.json`
+- historique CSV `models/<model>/<model>_<mode>_history.csv`
 
 ## Fine-tuning
 
@@ -127,14 +164,16 @@ Notes :
 - `--new-vocab` doit correspondre au nouveau dataset
 - `--fine-tune-tag` sert de suffixe pour nommer les checkpoints sauvegardés
 - pour un Transformer, un dataset de validation est obligatoire
-- un checkpoint issu d'un fine-tuning vers `emopia` peut ensuite être exploité depuis l'UI Streamlit
+- un checkpoint issu d'un fine-tuning vers `emopia` peut ensuite être exploité en CLI et dans l'UI Streamlit
+- `--seed` permet de rendre le lancement plus reproductible
+- un rapport complet est sauvegardé dans `models/<model>/<model>_<fine_tune_tag>_fine_tune_report.json`
 
 ## Génération MIDI
 
 Commande générale :
 
 ```bash
-python main.py generate --model <lstm|transformer> --tokenizer-mode <mono|poly>
+python main.py generate --model <lstm|transformer> --tokenizer-mode <mono|poly|emopia>
 ```
 
 Exemples :
@@ -146,14 +185,25 @@ python main.py generate \
   --checkpoint models/transformer/transformer_poly_final.pt \
   --output-midi outputs/generated_poly.mid \
   --max-tokens 256 \
-  --temperature 0.8
+  --temperature 0.8 \
+  --top-k 10 \
+  --seed 42
+```
+
+```bash
+python main.py generate \
+  --model transformer \
+  --tokenizer-mode emopia \
+  --checkpoint models/transformer/transformer_emopia_ft_final.pt \
+  --emotion HAPPY \
+  --output-midi outputs/generated_emopia_happy.mid
 ```
 
 Notes :
 
 - si `--checkpoint` n'est pas fourni, `main.py` essaie de retrouver automatiquement le checkpoint final ou le dernier checkpoint disponible
-- la CLI de `main.py` n'expose actuellement pas le mode `emopia`
-- pour générer à partir d'un checkpoint émotionnel, passe par l'interface Streamlit
+- `--emotion` et `--start-token` permettent de contrôler explicitement le token de départ en mode `emopia`
+- un rapport JSON de génération est sauvegardé par défaut à côté du MIDI, par exemple `outputs/generated_poly_metrics.json`
 
 ## Interface Streamlit
 
@@ -178,13 +228,13 @@ Les générations de l'UI sont sauvegardées dans `outputs/ui_generations/`.
 
 - datasets préprocessés : `data/processed/`
 - checkpoints : `models/lstm/` et `models/transformer/`
+- rapports d'entraînement : `models/<model>/*_metrics.json` et `*_history.csv`
 - MIDI générés en CLI : `outputs/`
+- métriques de génération en CLI : `outputs/*_metrics.json`
 - MIDI générés via l'UI : `outputs/ui_generations/`
 
 ## Limites actuelles
 
-- la création de dataset n'est pas encore exposée par une vraie CLI avec arguments ; elle passe actuellement par `src/tokenizer.py`
-- `main.py train` et `main.py generate` n'exposent aujourd'hui que `mono` et `poly`
 - certains exemples de données attendent des dossiers comme `data/midi_mono`, `data/midi_poly` ou `data/midi_emopia`, à préparer manuellement pour l'instant.
 
 ## Sources des datasets utilisés
