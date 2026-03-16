@@ -166,6 +166,7 @@ def fine_tune_model(
     lr=None,
     tokenizer_mode="fine_tune",
     device=device,
+    metrics_metadata=None,
 ):
     model, transfer_report = create_fine_tune_model(
         checkpoint_path=checkpoint_path,
@@ -193,7 +194,7 @@ def fine_tune_model(
             shuffle=False,
             require_emotions=require_emotions,
         )
-        losses = train_transformer(
+        training_report = train_transformer(
             model,
             dataloader,
             val_dataloader,
@@ -201,18 +202,29 @@ def fine_tune_model(
             lr=lr if lr is not None else 3e-4,
             device=device,
             tokenizer_mode=tokenizer_mode,
+            metrics_metadata=metrics_metadata,
         )
     else:
-        losses = train_lstm(
+        val_dataloader = None
+        if val_dataset_path is not None:
+            val_dataloader = load_dataloaders(
+                val_dataset_path,
+                batch_size=batch_size,
+                shuffle=False,
+                require_emotions=require_emotions,
+            )
+        training_report = train_lstm(
             model,
             dataloader,
+            val_dataloader=val_dataloader,
             num_epochs=num_epochs,
             lr=lr if lr is not None else 8e-4,
             device=device,
             tokenizer_mode=tokenizer_mode,
+            metrics_metadata=metrics_metadata,
         )
 
-    return model, transfer_report, losses
+    return model, transfer_report, training_report
 
 
 if __name__ == "__main__":

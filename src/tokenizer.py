@@ -1,16 +1,61 @@
+import argparse
+import json
+import os
+import random
+from pathlib import Path
+
+import torch
+import tqdm
+
 from midi_utils import load_mono_note, load_polyphonic_notes
 from emotion_utils import EMOPIA_EMOTIONS, EMOPIA_START_TOKENS
-import tqdm
-import os
-import torch
-import json
-import random
 
 TIME_STEP = 0.125
 MAX_DUR = 16
 MAX_REST = 16
 MIN_PITCH = 48
 MAX_PITCH = 84
+DEFAULT_PREPROCESS_CONFIGS = {
+    "mono": {
+        "input_dir": "data/midi_mono",
+        "dataset_output_path": "data/processed/dataset.pt",
+        "vocab_output_path": "data/processed/vocab",
+        "seq_length": 128,
+        "stride": 8,
+    },
+    "poly": {
+        "input_dir": "data/midi_poly",
+        "dataset_output_path": "data/processed/dataset_poly.pt",
+        "vocab_output_path": "data/processed/vocab_poly",
+        "seq_length": 256,
+        "stride": 48,
+    },
+    "emopia": {
+        "input_dir": "data/midi_emopia",
+        "dataset_output_path": "data/processed/dataset_emopia.pt",
+        "vocab_output_path": "data/processed/vocab_emopia",
+        "seq_length": 256,
+        "stride": 48,
+    },
+}
+
+
+def _midi_file_paths(input_dir, seed=None):
+    midi_paths = []
+    for root, _, files in os.walk(input_dir):
+        for file in files:
+            if file.endswith(".midi") or file.endswith(".mid"):
+                midi_paths.append(os.path.join(root, file))
+
+    randomizer = random.Random(seed)
+    randomizer.shuffle(midi_paths)
+    return midi_paths
+
+
+def get_preprocess_defaults(tokenizer_mode):
+    if tokenizer_mode not in DEFAULT_PREPROCESS_CONFIGS:
+        raise ValueError(f"Mode de tokenisation non supporte: {tokenizer_mode}")
+    return DEFAULT_PREPROCESS_CONFIGS[tokenizer_mode].copy()
 
 def notes_to_tokens(notes,
                     time_step=TIME_STEP,
@@ -108,36 +153,30 @@ def events_to_tokens_polyphonic(events,
     tokens.append("END")
     return tokens
 
-def tokenize_all_midis(input_dir, max_files=None):
+def tokenize_all_midis(input_dir, max_files=None, seed=None):
     all_tokens = []
-    for root, _, files in os.walk(input_dir):
-        files = sorted(files, key=lambda x: torch.randperm(len(files)).tolist())
-        for file in tqdm.tqdm(files):
-            if file.endswith(".midi") or file.endswith(".mid"):
-                input_path = os.path.join(root, file)
-                mono_note = load_mono_note(input_path)
-                tokens = notes_to_tokens(mono_note)
-                if tokens is not None:
-                    all_tokens.append(tokens)
-            if max_files is not None and len(all_tokens) >= max_files:
-                break
+    midi_paths = _midi_file_paths(input_dir, seed=seed)
+    for input_path in tqdm.tqdm(midi_paths, desc="Tokenizing MIDI files"):
+        mono_note = load_mono_note(input_path)
+        tokens = notes_to_tokens(mono_note)
+        if tokens is not None:
+            all_tokens.append(tokens)
+        if max_files is not None and len(all_tokens) >= max_files:
+            break
     return all_tokens
 
-def tokenize_all_midis_polyphonic(input_dir, max_files=None, emopia_mode=False):
+def tokenize_all_midis_polyphonic(input_dir, max_files=None, emopia_mode=False, seed=None):
     all_tokens = []
-    for root, _, files in os.walk(input_dir):
-        files = sorted(files, key=lambda x: torch.randperm(len(files)).tolist())
-        for file in tqdm.tqdm(files):
-            if file.endswith(".midi") or file.endswith(".mid"):
-                input_path = os.path.join(root, file)
-                notes, emotion = load_polyphonic_notes(input_path, emopia_mode=emopia_mode)
-                events = notes_to_events(notes)
-                events_sorted = sort_events(events)
-                tokens = events_to_tokens_polyphonic(events_sorted, emotion=emotion)
-                if tokens is not None:
-                    all_tokens.append(tokens)
-            if max_files is not None and len(all_tokens) >= max_files:
-                break
+    midi_paths = _midi_file_paths(input_dir, seed=seed)
+    for input_path in tqdm.tqdm(midi_paths, desc="Tokenizing MIDI files"):
+        notes, emotion = load_polyphonic_notes(input_path, emopia_mode=emopia_mode)
+        events = notes_to_events(notes)
+        events_sorted = sort_events(events)
+        tokens = events_to_tokens_polyphonic(events_sorted, emotion=emotion)
+        if tokens is not None:
+            all_tokens.append(tokens)
+        if max_files is not None and len(all_tokens) >= max_files:
+            break
     return all_tokens
 
 def build_vocab():
@@ -200,6 +239,8 @@ def make_training_examples(encoded_sequences, seq_length=128, stride=1, emotion_
     return inputs, targets
 
 def save_dataset(inputs, targets, output_path, emotions=None):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset = {
         "inputs": torch.tensor(inputs, dtype=torch.long),
         "targets": torch.tensor(targets, dtype=torch.long),
@@ -210,16 +251,19 @@ def save_dataset(inputs, targets, output_path, emotions=None):
     print(f"Dataset saved to {output_path}")
 
 def save_vocab(token_to_id, id_to_token, output_path):
-    with open(output_path + "_token_to_id.json", "w") as f:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(str(output_path) + "_token_to_id.json", "w") as f:
         json.dump(token_to_id, f, indent=2)
     print(f"Token to ID mapping saved to {output_path}_token_to_id.json")
 
-    with open(output_path + "_id_to_token.json", "w") as f:
+    with open(str(output_path) + "_id_to_token.json", "w") as f:
         json.dump(id_to_token, f, indent=2)
     print(f"ID to Token mapping saved to {output_path}_id_to_token.json")
 
-def create_vocab_and_dataset(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1):
-    all_tokens = tokenize_all_midis(input_dir, max_files=max_files)
+def create_vocab_and_dataset(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1, seed=None):
+    all_tokens = tokenize_all_midis(input_dir, max_files=max_files, seed=seed)
     print(f"Tokenized {len(all_tokens)} MIDI files")
     vocab, token_to_id, id_to_token = build_vocab()
     print(f"Vocabulary size: {len(vocab)}")
@@ -230,12 +274,12 @@ def create_vocab_and_dataset(input_dir, dataset_output_path, vocab_output_path, 
     save_dataset(inputs, targets, dataset_output_path)
     save_vocab(token_to_id, id_to_token, vocab_output_path)
 
-def create_vocab_and_dataset_polyphonic(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1):
-    all_tokens = tokenize_all_midis_polyphonic(input_dir, max_files=max_files)
+def create_vocab_and_dataset_polyphonic(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1, seed=None):
+    all_tokens = tokenize_all_midis_polyphonic(input_dir, max_files=max_files, seed=seed)
     print(f"Tokenized {len(all_tokens)} MIDI files")
     vocab, token_to_id, id_to_token = build_vocab_polyphonic()
     print(f"Vocabulary size: {len(vocab)}")
-    random.shuffle(all_tokens)
+    random.Random(seed).shuffle(all_tokens)
     val_split = int(0.9 * len(all_tokens))
     train_tokens = all_tokens[:val_split]
     val_tokens = all_tokens[val_split:]
@@ -250,15 +294,15 @@ def create_vocab_and_dataset_polyphonic(input_dir, dataset_output_path, vocab_ou
     save_dataset(val_inputs, val_targets, dataset_output_path.replace(".pt", "_val.pt"))
     save_vocab(token_to_id, id_to_token, vocab_output_path)
 
-def create_vocab_and_dataset_emopia(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1):
-    all_tokens = tokenize_all_midis_polyphonic(input_dir, max_files=max_files, emopia_mode=True)
+def create_vocab_and_dataset_emopia(input_dir, dataset_output_path, vocab_output_path, max_files=None, seq_length=128, stride=1, seed=None):
+    all_tokens = tokenize_all_midis_polyphonic(input_dir, max_files=max_files, emopia_mode=True, seed=seed)
     print(f"Tokenized {len(all_tokens)} MIDI files")
     vocab, token_to_id, id_to_token = build_vocab_emopia()
     print(f"Vocabulary size: {len(vocab)}")
     emotion_token_id_to_label = {
         token_to_id[start_token]: label for start_token, label in EMOPIA_START_TOKENS.items()
     }
-    random.shuffle(all_tokens)
+    random.Random(seed).shuffle(all_tokens)
     val_split = int(0.9 * len(all_tokens))
     train_tokens = all_tokens[:val_split]
     val_tokens = all_tokens[val_split:]
@@ -283,9 +327,76 @@ def create_vocab_and_dataset_emopia(input_dir, dataset_output_path, vocab_output
     save_dataset(val_inputs, val_targets, dataset_output_path.replace(".pt", "_val.pt"), emotions=val_emotions)
     save_vocab(token_to_id, id_to_token, vocab_output_path)
 
+
+def create_vocab_and_dataset_for_mode(
+    tokenizer_mode,
+    input_dir,
+    dataset_output_path,
+    vocab_output_path,
+    max_files=None,
+    seq_length=None,
+    stride=None,
+    seed=None,
+):
+    defaults = get_preprocess_defaults(tokenizer_mode)
+    seq_length = defaults["seq_length"] if seq_length is None else seq_length
+    stride = defaults["stride"] if stride is None else stride
+
+    if tokenizer_mode == "mono":
+        return create_vocab_and_dataset(
+            input_dir=input_dir,
+            dataset_output_path=dataset_output_path,
+            vocab_output_path=vocab_output_path,
+            max_files=max_files,
+            seq_length=seq_length,
+            stride=stride,
+            seed=seed,
+        )
+
+    if tokenizer_mode == "poly":
+        return create_vocab_and_dataset_polyphonic(
+            input_dir=input_dir,
+            dataset_output_path=dataset_output_path,
+            vocab_output_path=vocab_output_path,
+            max_files=max_files,
+            seq_length=seq_length,
+            stride=stride,
+            seed=seed,
+        )
+
+    if tokenizer_mode == "emopia":
+        return create_vocab_and_dataset_emopia(
+            input_dir=input_dir,
+            dataset_output_path=dataset_output_path,
+            vocab_output_path=vocab_output_path,
+            max_files=max_files,
+            seq_length=seq_length,
+            stride=stride,
+            seed=seed,
+        )
+
+    raise ValueError(f"Mode de tokenisation non supporte: {tokenizer_mode}")
+
 if __name__ == "__main__":
-    # create_vocab_and_dataset("data/midi_mono", "data/processed/dataset.pt", "data/processed/vocab", max_files=1000, seq_length=128, stride=8)
-    # create_vocab_and_dataset("data/midi_mono", "data/processed/dataset_test.pt", "data/processed/vocab_test", max_files=250, seq_length=128, stride=8)
-    # create_vocab_and_dataset_polyphonic("data/test_poly", "data/processed/dataset_poly_test.pt", "data/processed/vocab_poly", max_files=10, seq_length=128, stride=8)
-    # create_vocab_and_dataset_polyphonic("data/midi_poly", "data/processed/dataset_poly.pt", "data/processed/vocab_poly", max_files= 1200, seq_length=256, stride=48)
-    create_vocab_and_dataset_emopia("data/midi_emopia", "data/processed/dataset_emopia.pt", "data/processed/vocab_emopia", max_files=1200, seq_length=256, stride=48)
+    parser = argparse.ArgumentParser(description="Build token vocabularies and training datasets from MIDI folders.")
+    parser.add_argument("--tokenizer-mode", choices=["mono", "poly", "emopia"], default="emopia")
+    parser.add_argument("--input-dir", default=None, help="Directory containing the source MIDI files.")
+    parser.add_argument("--dataset-output", default=None, help="Output dataset path (.pt).")
+    parser.add_argument("--vocab-output", default=None, help="Output vocab prefix path.")
+    parser.add_argument("--max-files", type=int, default=None)
+    parser.add_argument("--seq-length", type=int, default=None)
+    parser.add_argument("--stride", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    defaults = get_preprocess_defaults(args.tokenizer_mode)
+    create_vocab_and_dataset_for_mode(
+        tokenizer_mode=args.tokenizer_mode,
+        input_dir=args.input_dir or defaults["input_dir"],
+        dataset_output_path=args.dataset_output or defaults["dataset_output_path"],
+        vocab_output_path=args.vocab_output or defaults["vocab_output_path"],
+        max_files=args.max_files,
+        seq_length=args.seq_length,
+        stride=args.stride,
+        seed=args.seed,
+    )
