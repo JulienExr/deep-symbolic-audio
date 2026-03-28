@@ -73,5 +73,5 @@ class MusicTransformer(nn.Module):
 def build_music_lstm(vocab_size, emb_dim=128, hidden_dim=256, num_layers=2, dropout=0.1):
     return MusicLSTM(vocab_size, emb_dim, hidden_dim, num_layers, dropout)
 
-def build_music_transformer(vocab_size, d_model=384, n_heads=6, n_layers=6, d_ff=1024, dropout=0.1, max_len=512, pad_token_id=0, emotion_mode=False):
+def build_music_transformer(vocab_size, d_model=384, n_heads=6, n_layers=6, d_ff=1536, dropout=0.1, max_len=512, pad_token_id=0, emotion_mode=False):
     return MusicTransformer(vocab_size, d_model, n_heads, n_layers, d_ff, dropout, max_len, pad_token_id, emotion_mode)
