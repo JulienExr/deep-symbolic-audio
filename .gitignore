@@ -16,6 +16,8 @@ models/
 outputs/
 checkpoints/
 assets/
+demo/
+rapports/
 
 # Distribution / packaging
 .Python
