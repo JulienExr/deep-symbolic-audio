@@ -10,7 +10,7 @@ from models import MusicLSTM, build_music_lstm, build_music_transformer
 from tokenizer import build_vocab, build_vocab_emopia, build_vocab_polyphonic
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-TIME_STEP = 0.125
+TIME_STEP = 0.05
 DEFAULT_AUDIO_SAMPLE_RATE = 44100
 
 
@@ -393,7 +393,7 @@ def load_generation_model(model_name, checkpoint_path, tokenizer_mode="mono", de
 
     if model_name == "lstm":
         model = build_music_lstm(vocab_size)
-    elif model_name == "transformer":
+    elif model_name in ["transformer", "transformer_giantmidi"]:
         emotion_mode = (
             tokenizer_mode == "emopia"
             or "emotion_embedding.weight" in checkpoint_state
@@ -430,7 +430,7 @@ def generate_tokens(
         raise ValueError(f"Token de depart introuvable dans le vocabulaire: {start_token}")
     start_token_id = token_to_id[start_token]
     emotion_id = None
-    if tokenizer_mode == "emopia" and model_name == "transformer":
+    if tokenizer_mode == "emopia" and model_name in ["transformer", "transformer_giantmidi"]:
         emotion_id = get_emopia_emotion_id(start_token, token_to_id)
 
     if model_name == "lstm":
