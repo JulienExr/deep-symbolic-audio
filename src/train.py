@@ -1,3 +1,4 @@
+import math
 import os
 import matplotlib.pyplot as plt
 import torch
@@ -25,6 +26,54 @@ def forward_transformer_batch(model, inputs, emotion=None):
             raise ValueError("Le modele attend des labels d'emotion, mais le batch n'en contient pas.")
         return model(inputs, emotion)
     return model(inputs)
+
+
+def resolve_warmup_steps(total_steps, warmup_ratio):
+    if not 0.0 <= warmup_ratio < 1.0:
+        raise ValueError(f"warmup_ratio doit etre dans [0, 1), recu: {warmup_ratio}")
+    if total_steps <= 1 or warmup_ratio == 0.0:
+        return 0
+    return min(total_steps - 1, max(1, int(round(total_steps * warmup_ratio))))
+
+
+class WarmupCosineScheduler:
+    def __init__(self, optimizer, total_steps, warmup_steps=0, min_lr_ratio=0.0):
+        if total_steps <= 0:
+            raise ValueError(f"total_steps doit etre > 0, recu: {total_steps}")
+        if not 0.0 <= min_lr_ratio <= 1.0:
+            raise ValueError(f"min_lr_ratio doit etre dans [0, 1], recu: {min_lr_ratio}")
+
+        self.optimizer = optimizer
+        self.total_steps = total_steps
+        self.warmup_steps = min(max(0, warmup_steps), total_steps - 1 if total_steps > 1 else 0)
+        self.min_lr_ratio = min_lr_ratio
+        self.base_lrs = [group["lr"] for group in optimizer.param_groups]
+        self.step_index = 0
+        self._apply_lr(self._lr_scale(self.step_index))
+
+    def _lr_scale(self, step_index):
+        if self.warmup_steps > 0 and step_index < self.warmup_steps:
+            return float(step_index + 1) / float(self.warmup_steps)
+
+        decay_span = self.total_steps - self.warmup_steps - 1
+        if decay_span <= 0:
+            return 1.0
+
+        progress = min(1.0, max(0.0, (step_index - self.warmup_steps) / decay_span))
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return self.min_lr_ratio + (1.0 - self.min_lr_ratio) * cosine
+
+    def _apply_lr(self, scale):
+        for base_lr, group in zip(self.base_lrs, self.optimizer.param_groups):
+            group["lr"] = base_lr * scale
+
+    def step(self):
+        if self.step_index < self.total_steps - 1:
+            self.step_index += 1
+        self._apply_lr(self._lr_scale(self.step_index))
+
+    def get_last_lr(self):
+        return [group["lr"] for group in self.optimizer.param_groups]
 
 
 def get_model_dir(model_name):
@@ -183,6 +232,8 @@ def train_transformer(
     val_dataloader,
     num_epochs=10,
     lr=3e-4,
+    warmup_ratio=0.1,
+    min_lr_ratio=0.0,
     device=device,
     tokenizer_mode="mono",
     metrics_metadata=None,
@@ -191,11 +242,30 @@ def train_transformer(
 
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    total_steps = max(1, num_epochs * len(dataloader))
+    warmup_steps = resolve_warmup_steps(total_steps, warmup_ratio)
+    scheduler = WarmupCosineScheduler(
+        optimizer,
+        total_steps=total_steps,
+        warmup_steps=warmup_steps,
+        min_lr_ratio=min_lr_ratio,
+    )
     criterion = torch.nn.CrossEntropyLoss()
     epoch_losses = []
     val_losses = []
     scaler = GradScaler()
     checkpoint_paths = []
+    metrics_metadata = dict(metrics_metadata or {})
+    metrics_metadata.update(
+        {
+            "scheduler": "warmup_cosine_decay",
+            "base_learning_rate": lr,
+            "warmup_ratio": warmup_ratio,
+            "warmup_steps": warmup_steps,
+            "total_optimizer_steps": total_steps,
+            "min_lr_ratio": min_lr_ratio,
+        }
+    )
 
     for epoch in range(num_epochs):
         model.train()
@@ -217,27 +287,32 @@ def train_transformer(
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
 
             total_loss += loss.item()
-            progress_bar.set_postfix(loss=f"{total_loss / step:.4f}")
+            progress_bar.set_postfix(loss=f"{total_loss / step:.4f}", lr=f"{scheduler.get_last_lr()[0]:.2e}")
 
         epoch_loss = total_loss / len(dataloader)
         epoch_losses.append(epoch_loss)
         val_loss_avg = evaluate_transformer(model, val_dataloader, criterion, device)
         val_losses.append(val_loss_avg)
 
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Validation Loss: {val_loss_avg:.4f}")
+        print(
+            f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, "
+            f"Validation Loss: {val_loss_avg:.4f}, LR: {scheduler.get_last_lr()[0]:.2e}"
+        )
         if (epoch + 1) % 5 == 0 or epoch == 0:
-            checkpoint_path = get_checkpoint_path("transformer", tokenizer_mode, epoch + 1)
+            checkpoint_path = get_checkpoint_path("transformer_giantmidi", tokenizer_mode, epoch + 1)
             torch.save(model.state_dict(), checkpoint_path)
             checkpoint_paths.append(checkpoint_path)
             
-    final_model_path = get_final_model_path("transformer", tokenizer_mode)
+    final_model_path = get_final_model_path("transformer_giantmidi", tokenizer_mode)
     torch.save(model.state_dict(), final_model_path)
-    plot_training_loss(epoch_losses, val_losses, "transformer", tokenizer_mode)
+    plot_training_loss(epoch_losses, val_losses, "transformer_giantmidi", tokenizer_mode)
+    metrics_metadata["final_learning_rate"] = scheduler.get_last_lr()[0]
 
     report = build_training_report(
-        model_name="transformer",
+        model_name="transformer_giantmidi",
         tokenizer_mode=tokenizer_mode,
         train_losses=epoch_losses,
         val_losses=val_losses,
@@ -247,8 +322,8 @@ def train_transformer(
         parameter_stats=count_model_parameters(model),
     )
     write_training_report(
-        json_path=get_metrics_json_path("transformer", tokenizer_mode),
-        csv_path=get_metrics_csv_path("transformer", tokenizer_mode),
+        json_path=get_metrics_json_path("transformer_giantmidi", tokenizer_mode),
+        csv_path=get_metrics_csv_path("transformer_giantmidi", tokenizer_mode),
         report=report,
     )
     return report
