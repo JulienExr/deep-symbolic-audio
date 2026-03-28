@@ -119,7 +119,7 @@ st.caption("Génère et écoute directement un fichier MIDI créé par le modèl
 left_col, right_col = st.columns([1, 1])
 
 with left_col:
-    model_name = st.selectbox("Modèle", ["lstm", "transformer"])
+    model_name = st.selectbox("Modèle", ["lstm", "transformer", "transformer_giantmidi"])
     tokenizer_mode = st.selectbox("Mode de tokens", ["mono", "poly", "emopia"])
     available_checkpoints = find_checkpoints(model_name)
 
@@ -140,9 +140,9 @@ with left_col:
         selected_emotion = st.selectbox("Emotion", list(EMOPIA_START_TOKENS.keys()))
         start_token = EMOPIA_START_TOKENS[selected_emotion]
 
-    max_tokens = st.slider("Nombre max de tokens", min_value=32, max_value=512, value=200, step=8)
-    temperature = st.slider("Température", min_value=0.1, max_value=1.5, value=0.8, step=0.1)
-    top_k = st.slider("Top-k", min_value=1, max_value=64, value=10, step=1)
+    max_tokens = st.slider("Nombre max de tokens", min_value=32, max_value=2048, value=200, step=8)
+    temperature = st.slider("Température", min_value=0.1, max_value=1.5, value=1.0, step=0.1)
+    top_k = st.slider("Top-k", min_value=1, max_value=64, value=20, step=1)
     sample_rate = st.select_slider(
         "Qualité audio",
         options=[16000, 22050, 32000, 44100],

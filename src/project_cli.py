@@ -65,7 +65,7 @@ def build_parser():
 
 
 def add_model_arguments(parser, tokenizer_modes):
-    parser.add_argument("--model", choices=["lstm", "transformer"], default="lstm", help="Model architecture to use.")
+    parser.add_argument("--model", choices=["lstm", "transformer", "transformer_giantmidi"], default="lstm", help="Model architecture to use.")
     parser.add_argument("--tokenizer-mode", choices=tokenizer_modes, default=tokenizer_modes[0], help="Vocabulary/tokenization mode to use.")
 
 
@@ -78,6 +78,18 @@ def add_training_arguments(parser):
     parser.add_argument("--batch-size", type=int, default=256, help="Training batch size.")
     parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs.")
     parser.add_argument("--lr", type=float, default=None, help="Learning rate override.")
+    parser.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=0.1,
+        help="Fraction of total optimizer steps used for linear warmup in Transformer training.",
+    )
+    parser.add_argument(
+        "--min-lr-ratio",
+        type=float,
+        default=0.0,
+        help="Final learning-rate ratio relative to --lr after cosine decay in Transformer training.",
+    )
 
 
 def main(root_dir):
@@ -233,6 +245,9 @@ def build_training_metadata(args, root_dir, device, lr, train_dataset_path, val_
         "val_dataset_path": str(val_dataset_path) if val_dataset_path is not None else None,
         "root_dir": str(root_dir),
     }
+    if args.model != "lstm":
+        metadata["warmup_ratio"] = args.warmup_ratio
+        metadata["min_lr_ratio"] = args.min_lr_ratio
     if getattr(args, "checkpoint", None) is not None:
         metadata["checkpoint_path"] = str(resolve_path(root_dir, args.checkpoint))
     return metadata
@@ -345,6 +360,8 @@ def run_training(args, root_dir, device):
         val_dataloader,
         num_epochs=args.epochs,
         lr=lr,
+        warmup_ratio=args.warmup_ratio,
+        min_lr_ratio=args.min_lr_ratio,
         device=device,
         tokenizer_mode=args.tokenizer_mode,
         metrics_metadata=metrics_metadata,
@@ -395,6 +412,8 @@ def run_fine_tuning(args, root_dir, device):
         batch_size=args.batch_size,
         num_epochs=args.epochs,
         lr=args.lr,
+        warmup_ratio=args.warmup_ratio,
+        min_lr_ratio=args.min_lr_ratio,
         tokenizer_mode=args.fine_tune_tag,
         device=device,
         metrics_metadata=metrics_metadata,
