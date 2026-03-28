@@ -10,11 +10,11 @@ import tqdm
 from midi_utils import load_mono_note, load_polyphonic_notes
 from emotion_utils import EMOPIA_EMOTIONS, EMOPIA_START_TOKENS
 
-TIME_STEP = 0.125
+TIME_STEP = 0.05
 MAX_DUR = 16
 MAX_REST = 16
-MIN_PITCH = 48
-MAX_PITCH = 84
+MIN_PITCH = 36
+MAX_PITCH = 96
 DEFAULT_PREPROCESS_CONFIGS = {
     "mono": {
         "input_dir": "data/midi_mono",
@@ -119,7 +119,9 @@ def notes_to_events(notes, time_step=TIME_STEP, min_pitch=MIN_PITCH, max_pitch=M
     return events
 
 def sort_events(events):
-    return sorted(events, key=lambda x: (x[0], 0 if x[1] == "NOTE_ON" else 1))
+    # NOTE_OFF must come before NOTE_ON for the same pitch/time so re-attacks
+    # are reconstructed as two notes instead of a 1-step truncated note.
+    return sorted(events, key=lambda x: (x[0], x[2], 0 if x[1] == "NOTE_OFF" else 1))
 
 def events_to_tokens_polyphonic(events,
                                time_step=TIME_STEP,
