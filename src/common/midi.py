@@ -1,8 +1,5 @@
-import pretty_midi
 import numpy as np
-from pathlib import Path
-
-from emotion_utils import EMOPIA_FILE_PREFIX_TO_EMOTION
+import pretty_midi
 
 
 def notes_to_monophonic_grid(notes, time_step):
@@ -79,7 +76,7 @@ def load_mono_note(midi_path):
     notes.sort(key=lambda n: n.start)
     return notes
 
-def load_polyphonic_notes(midi_path, emopia_mode=False):
+def load_polyphonic_notes(midi_path):
     midi = pretty_midi.PrettyMIDI(midi_path)
     notes = []
     for instrument in midi.instruments:
@@ -87,17 +84,7 @@ def load_polyphonic_notes(midi_path, emopia_mode=False):
             continue
         notes.extend(instrument.notes)
     notes.sort(key=lambda n: n.start)
-    if emopia_mode:
-        prefix = Path(midi_path).stem.split("_")[0]
-        emotion = EMOPIA_FILE_PREFIX_TO_EMOTION.get(prefix)
-        if emotion is None:
-            raise ValueError(
-                f"Impossible de determiner l'emotion EMOPIA pour {midi_path}. "
-                f"Prefixe attendu: {sorted(EMOPIA_FILE_PREFIX_TO_EMOTION)}"
-            )
-        return notes, emotion
-    
-    return notes, None
+    return notes
 
 if __name__ == "__main__":
     midi_path = "/home/julien/Documents/UQAC(nogit)/deep_learning/deep-symbolic-audio/data/midi_poly/MIDI-Unprocessed_01_R1_2006_01-09_ORIG_MID--AUDIO_01_R1_2006_01_Track01_wav.midi"

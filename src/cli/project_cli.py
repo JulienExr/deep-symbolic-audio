@@ -9,9 +9,6 @@ except ImportError:  # pragma: no cover - numpy is available in this project, th
     np = None
 
 
-EMOPIA_EMOTIONS = ("HAPPY", "SAD", "ANGRY", "RELAXED")
-
-
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Train, preprocess, fine-tune or generate symbolic music with LSTM and Transformer models."
@@ -22,7 +19,7 @@ def build_parser():
         "preprocess",
         help="Build dataset tensors and vocab files from a MIDI directory.",
     )
-    preprocess_parser.add_argument("--tokenizer-mode", choices=["mono", "poly", "emopia"], default="mono")
+    preprocess_parser.add_argument("--tokenizer-mode", choices=["mono", "poly"], default="mono")
     preprocess_parser.add_argument("--input-dir", default=None, help="Directory containing source MIDI files.")
     preprocess_parser.add_argument("--dataset-output", default=None, help="Output dataset path (.pt).")
     preprocess_parser.add_argument("--vocab-output", default=None, help="Output vocabulary path prefix.")
@@ -32,14 +29,14 @@ def build_parser():
     preprocess_parser.add_argument("--seed", type=int, default=42, help="Seed used for file ordering and dataset splits.")
 
     train_parser = subparsers.add_parser("train", help="Train an LSTM or Transformer model.")
-    add_model_arguments(train_parser, tokenizer_modes=["mono", "poly", "emopia"])
+    add_model_arguments(train_parser, tokenizer_modes=["mono", "poly"])
     add_runtime_arguments(train_parser)
     add_training_arguments(train_parser)
     train_parser.add_argument("--dataset", default="data/processed/dataset.pt", help="Path to the training dataset.")
     train_parser.add_argument("--val-dataset", default=None, help="Optional path to the validation dataset.")
 
     fine_tune_parser = subparsers.add_parser("fine-tune", help="Fine-tune a checkpoint on a new vocabulary.")
-    add_model_arguments(fine_tune_parser, tokenizer_modes=["mono", "poly", "emopia"])
+    add_model_arguments(fine_tune_parser, tokenizer_modes=["mono", "poly"])
     add_runtime_arguments(fine_tune_parser)
     add_training_arguments(fine_tune_parser)
     fine_tune_parser.add_argument("--dataset", default="data/processed/dataset.pt", help="Path to the training dataset.")
@@ -50,15 +47,14 @@ def build_parser():
     fine_tune_parser.add_argument("--fine-tune-tag", default="fine_tune", help="Suffix used when saving fine-tuned checkpoints.")
 
     generate_parser = subparsers.add_parser("generate", help="Generate a MIDI file from a trained checkpoint.")
-    add_model_arguments(generate_parser, tokenizer_modes=["mono", "poly", "emopia"])
+    add_model_arguments(generate_parser, tokenizer_modes=["mono", "poly"])
     add_runtime_arguments(generate_parser)
     generate_parser.add_argument("--checkpoint", default=None, help="Checkpoint to load for generation.")
     generate_parser.add_argument("--output-midi", default="outputs/generated_music.mid", help="Output MIDI path.")
     generate_parser.add_argument("--max-tokens", type=int, default=200, help="Maximum number of tokens to generate.")
     generate_parser.add_argument("--temperature", type=float, default=0.8, help="Sampling temperature for generation.")
     generate_parser.add_argument("--top-k", type=int, default=10, help="Top-k sampling used for Transformer generation.")
-    generate_parser.add_argument("--emotion", choices=EMOPIA_EMOTIONS, default=None, help="Emotion label used for emopia generation.")
-    generate_parser.add_argument("--start-token", default=None, help="Explicit start token for generation, e.g. START or START_HAPPY.")
+    generate_parser.add_argument("--start-token", default=None, help="Explicit start token for generation, e.g. START.")
     generate_parser.add_argument("--metrics-output", default=None, help="Optional JSON path for generation metrics.")
 
     return parser
@@ -170,20 +166,18 @@ def resolve_validation_dataset_path(root_dir, dataset_path, val_dataset_path=Non
 
 
 def build_model(model_name, vocab_size, tokenizer_mode="mono"):
-    from models import build_music_lstm, build_music_transformer
+    from modeling.architectures import build_music_lstm, build_music_transformer
 
     if model_name == "lstm":
         return build_music_lstm(vocab_size)
-    return build_music_transformer(vocab_size, emotion_mode=(tokenizer_mode == "emopia"))
+    return build_music_transformer(vocab_size)
 
 
 def build_vocab_for_mode(tokenizer_mode):
-    from tokenizer import build_vocab, build_vocab_emopia, build_vocab_polyphonic
+    from symbolic.tokenizer import build_vocab, build_vocab_polyphonic
 
     if tokenizer_mode == "poly":
         return build_vocab_polyphonic()
-    if tokenizer_mode == "emopia":
-        return build_vocab_emopia()
     return build_vocab()
 
 
@@ -254,23 +248,11 @@ def build_training_metadata(args, root_dir, device, lr, train_dataset_path, val_
 
 
 def resolve_generation_start_token(args):
-    if args.start_token and args.emotion:
-        raise ValueError("Utilise soit --start-token soit --emotion, pas les deux en meme temps.")
-
-    if args.tokenizer_mode != "emopia":
-        if args.start_token or args.emotion:
-            raise ValueError("--start-token et --emotion sont reserves au mode emopia.")
-        return None
-
-    if args.start_token:
-        return args.start_token
-    if args.emotion:
-        return f"START_{args.emotion}"
-    return None
+    return args.start_token
 
 
 def run_preprocess(args, root_dir):
-    from tokenizer import create_vocab_and_dataset_for_mode, get_preprocess_defaults
+    from symbolic.tokenizer import create_vocab_and_dataset_for_mode, get_preprocess_defaults
 
     defaults = get_preprocess_defaults(args.tokenizer_mode)
     input_dir = resolve_path(root_dir, args.input_dir or defaults["input_dir"])
@@ -300,18 +282,16 @@ def run_preprocess(args, root_dir):
 
 
 def run_training(args, root_dir, device):
-    from dataset import load_dataloaders
-    from train import train_lstm, train_transformer
+    from dataio.dataset import load_dataloaders
+    from training.train import train_lstm, train_transformer
 
     train_dataset_path = resolve_path(root_dir, args.dataset)
     default_lr = 8e-4 if args.model == "lstm" else 3e-4
     lr = args.lr if args.lr is not None else default_lr
-    require_emotions = args.model == "transformer" and args.tokenizer_mode == "emopia"
 
     dataloader = load_dataloaders(
         str(train_dataset_path),
         batch_size=args.batch_size,
-        require_emotions=require_emotions,
     )
     val_dataset_path = resolve_validation_dataset_path(root_dir, args.dataset, args.val_dataset)
     val_dataloader = None
@@ -320,7 +300,6 @@ def run_training(args, root_dir, device):
             str(val_dataset_path),
             batch_size=args.batch_size,
             shuffle=False,
-            require_emotions=require_emotions,
         )
 
     metrics_metadata = build_training_metadata(
@@ -358,6 +337,7 @@ def run_training(args, root_dir, device):
         model,
         dataloader,
         val_dataloader,
+        model_name=args.model,
         num_epochs=args.epochs,
         lr=lr,
         warmup_ratio=args.warmup_ratio,
@@ -370,7 +350,7 @@ def run_training(args, root_dir, device):
 
 
 def run_fine_tuning(args, root_dir, device):
-    from fine_tune import fine_tune_model
+    from training.fine_tune import fine_tune_model
     from metrics import save_json
 
     checkpoint_path = resolve_path(root_dir, args.checkpoint) if args.checkpoint else default_checkpoint_path(root_dir, args.model, args.tokenizer_mode)
@@ -430,7 +410,7 @@ def run_fine_tuning(args, root_dir, device):
 
 
 def run_generation(args, root_dir, device):
-    from generate import generate_tokens, tokens_to_midi
+    from symbolic.generate import generate_tokens, tokens_to_midi
     from metrics import build_generation_report, save_json
 
     checkpoint_path = resolve_path(root_dir, args.checkpoint) if args.checkpoint else default_checkpoint_path(root_dir, args.model, args.tokenizer_mode)
@@ -468,7 +448,7 @@ def run_generation(args, root_dir, device):
             "top_k": args.top_k,
             "seed": args.seed,
             "device": str(device),
-            "start_token": start_token or ("START_HAPPY" if args.tokenizer_mode == "emopia" else "START"),
+            "start_token": start_token or "START",
         },
     )
     save_json(metrics_path, generation_report)

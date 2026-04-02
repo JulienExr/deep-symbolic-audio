@@ -3,10 +3,9 @@ from pathlib import Path
 
 import torch
 
-from dataset import load_dataloaders
-from emotion_utils import is_emopia_vocab
-from models import build_music_lstm, build_music_transformer
-from train import train_lstm, train_transformer
+from dataio.dataset import load_dataloaders
+from modeling.architectures import build_music_lstm, build_music_transformer
+from training.train import train_lstm, train_transformer
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -40,9 +39,9 @@ def get_output_keys(model_name):
     raise ValueError(f"Architecture non supportée: {model_name}")
 
 
-def build_model_for_fine_tuning(model_name, vocab_size, emotion_mode=False):
+def build_model_for_fine_tuning(model_name, vocab_size):
     if model_name == "transformer":
-        return build_music_transformer(vocab_size, emotion_mode=emotion_mode)
+        return build_music_transformer(vocab_size)
     if model_name == "lstm":
         return build_music_lstm(vocab_size)
     raise ValueError(f"Architecture non supportée: {model_name}")
@@ -141,8 +140,10 @@ def create_fine_tune_model(
     if model_name is None:
         model_name = infer_model_name_from_state_dict(checkpoint_state)
 
-    emotion_mode = "emotion_embedding.weight" in checkpoint_state or is_emopia_vocab(new_token_to_id)
-    model = build_model_for_fine_tuning(model_name, len(new_token_to_id), emotion_mode=emotion_mode)
+    if "emotion_embedding.weight" in checkpoint_state:
+        raise ValueError("Les checkpoints EMOPIA/emotion ne sont plus supportes par ce projet.")
+
+    model = build_model_for_fine_tuning(model_name, len(new_token_to_id))
     transfer_report = resize_and_load_state_dict(
         model=model,
         checkpoint_state=checkpoint_state,
@@ -178,11 +179,9 @@ def fine_tune_model(
         device=device,
     )
 
-    require_emotions = getattr(model, "emotion_mode", False)
     dataloader = load_dataloaders(
         train_dataset_path,
         batch_size=batch_size,
-        require_emotions=require_emotions,
     )
 
     effective_model_name = transfer_report["model_name"]
@@ -194,12 +193,12 @@ def fine_tune_model(
             val_dataset_path,
             batch_size=batch_size,
             shuffle=False,
-            require_emotions=require_emotions,
         )
         training_report = train_transformer(
             model,
             dataloader,
             val_dataloader,
+            model_name=effective_model_name,
             num_epochs=num_epochs,
             lr=lr if lr is not None else 3e-4,
             warmup_ratio=warmup_ratio,
@@ -215,7 +214,6 @@ def fine_tune_model(
                 val_dataset_path,
                 batch_size=batch_size,
                 shuffle=False,
-                require_emotions=require_emotions,
             )
         training_report = train_lstm(
             model,
@@ -229,22 +227,3 @@ def fine_tune_model(
         )
 
     return model, transfer_report, training_report
-
-
-if __name__ == "__main__":
-    root_dir = Path(__file__).resolve().parents[1]
-    _, report, _ = fine_tune_model(
-        checkpoint_path=root_dir / "models/transformer/transformer_poly_final.pt",
-        old_vocab_path=root_dir / "data/processed/vocab_poly_token_to_id.json",
-        new_vocab_path=root_dir / "data/processed/vocab_emopia_token_to_id.json",
-        train_dataset_path=root_dir / "data/processed/dataset_emopia_train.pt",
-        val_dataset_path=root_dir / "data/processed/dataset_emopia_val.pt",
-        model_name="transformer",
-        num_epochs=30,
-        lr=1e-4,
-    )
-    print(f"Modele charge: {report['model_name']}")
-    print(f"Ancien vocabulaire: {report['old_vocab_size']}")
-    print(f"Nouveau vocabulaire: {report['new_vocab_size']}")
-    print(f"Tokens copies dans l'embedding: {report['copied_embedding_tokens']}")
-    print(f"Tokens copies dans la sortie: {report['copied_output_tokens']}")

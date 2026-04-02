@@ -1,6 +1,8 @@
-from midi_utils import notes_to_monophonic_grid, save_monophonic_midi
-import pretty_midi
 import os
+
+import pretty_midi
+
+from common.midi import notes_to_monophonic_grid, save_monophonic_midi
 
 
 DATA_RAW_DIR = "data/raw_midi/maestro-v3.0.0/"

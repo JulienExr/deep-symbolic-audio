@@ -3,11 +3,11 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import torch
 import pretty_midi
-from emotion_utils import EMOPIA_START_TOKENS, is_emopia_vocab
-from models import MusicLSTM, build_music_lstm, build_music_transformer
-from tokenizer import build_vocab, build_vocab_emopia, build_vocab_polyphonic
+import torch
+
+from modeling.architectures import MusicLSTM, build_music_lstm, build_music_transformer
+from symbolic.tokenizer import build_vocab, build_vocab_polyphonic
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TIME_STEP = 0.05
@@ -18,7 +18,7 @@ def find_available_soundfonts():
     candidate_roots = [
         Path.home() / ".soundfont.sf2",
         Path.home() / ".soundfonts",
-        Path(__file__).resolve().parents[1] / "assets" / "soundfonts",
+        Path(__file__).resolve().parents[2] / "assets" / "soundfonts",
     ]
 
     pretty_midi_dir = Path(pretty_midi.__file__).resolve().parent
@@ -69,14 +69,6 @@ def generate_lstm(model, start_token_id, id_to_token, max_tokens=200, temperatur
 
     return generated
 
-def get_emopia_emotion_id(start_token, token_to_id):
-    if start_token not in EMOPIA_START_TOKENS:
-        raise ValueError(f"Token EMOPIA invalide pour l'emotion globale: {start_token}")
-    if start_token not in token_to_id:
-        raise ValueError(f"Token EMOPIA introuvable dans le vocabulaire: {start_token}")
-    return EMOPIA_START_TOKENS[start_token]
-
-
 def generate_transformer(
     model,
     start_token_id,
@@ -84,14 +76,10 @@ def generate_transformer(
     max_tokens=200,
     temperature=0.8,
     top_k=10,
-    emotion_id=None,
     device=device,
 ):
     model.eval()
     generated = [start_token_id]
-    emotion = None
-    if emotion_id is not None:
-        emotion = torch.tensor([emotion_id], dtype=torch.long, device=device)
 
     for _ in range(max_tokens):
         x = torch.tensor([generated], dtype=torch.long, device=device)
@@ -99,7 +87,7 @@ def generate_transformer(
         if x.size(1) > model.max_len:
             x = x[:, -model.max_len:]
 
-        logits = model(x, emotion=emotion)
+        logits = model(x)
         logits = logits[:, -1, :] / temperature
 
 
@@ -237,7 +225,7 @@ def tokens_to_pretty_midi_polyphonic(tokens, velocity=100, program=0):
 
 
 def tokens_to_pretty_midi_dispatch(tokens, tokenizer_mode="mono", velocity=100, program=0):
-    if tokenizer_mode in {"poly", "emopia"}:
+    if tokenizer_mode == "poly":
         return tokens_to_pretty_midi_polyphonic(tokens, velocity=velocity, program=program)
     return tokens_to_pretty_midi(tokens, velocity=velocity, program=program)
 
@@ -383,23 +371,18 @@ def tokens_to_wav_bytes(
 def load_generation_model(model_name, checkpoint_path, tokenizer_mode="mono", device=device):
     if tokenizer_mode == "poly":
         vocab, token_to_id, id_to_token = build_vocab_polyphonic()
-    elif tokenizer_mode == "emopia":
-        vocab, token_to_id, id_to_token = build_vocab_emopia()
     else:
         vocab, token_to_id, id_to_token = build_vocab()
     vocab_size = len(vocab)
 
     checkpoint_state = torch.load(checkpoint_path, map_location=device)
+    if "emotion_embedding.weight" in checkpoint_state:
+        raise ValueError("Les checkpoints EMOPIA/emotion ne sont plus supportes par ce projet.")
 
     if model_name == "lstm":
         model = build_music_lstm(vocab_size)
     elif model_name in ["transformer", "transformer_giantmidi"]:
-        emotion_mode = (
-            tokenizer_mode == "emopia"
-            or "emotion_embedding.weight" in checkpoint_state
-            or is_emopia_vocab(token_to_id)
-        )
-        model = build_music_transformer(vocab_size, emotion_mode=emotion_mode)
+        model = build_music_transformer(vocab_size)
     else:
         raise ValueError(f"Unsupported model: {model_name}")
 
@@ -425,13 +408,10 @@ def generate_tokens(
         device=device,
     )
     if start_token is None:
-        start_token = "START_HAPPY" if tokenizer_mode == "emopia" else "START"
+        start_token = "START"
     if start_token not in token_to_id:
         raise ValueError(f"Token de depart introuvable dans le vocabulaire: {start_token}")
     start_token_id = token_to_id[start_token]
-    emotion_id = None
-    if tokenizer_mode == "emopia" and model_name in ["transformer", "transformer_giantmidi"]:
-        emotion_id = get_emopia_emotion_id(start_token, token_to_id)
 
     if model_name == "lstm":
         generated_ids = generate_lstm(
@@ -450,7 +430,6 @@ def generate_tokens(
             max_tokens=max_tokens,
             temperature=temperature,
             top_k=top_k,
-            emotion_id=emotion_id,
             device=device,
         )
 

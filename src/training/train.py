@@ -5,27 +5,12 @@ import torch
 import tqdm
 from torch.amp import autocast, GradScaler
 
-from dataset import load_dataloaders
+from dataio.dataset import load_dataloaders
 from metrics import count_model_parameters, build_training_report, write_training_report
-from models import MusicLSTM
-from tokenizer import build_vocab
+from modeling.architectures import MusicLSTM
+from symbolic.tokenizer import build_vocab
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def unpack_batch(batch):
-    if len(batch) == 3:
-        return batch
-    inputs, targets = batch
-    return inputs, targets, None
-
-
-def forward_transformer_batch(model, inputs, emotion=None):
-    if getattr(model, "emotion_mode", False):
-        if emotion is None:
-            raise ValueError("Le modele attend des labels d'emotion, mais le batch n'en contient pas.")
-        return model(inputs, emotion)
-    return model(inputs)
 
 
 def resolve_warmup_steps(total_steps, warmup_ratio):
@@ -122,8 +107,7 @@ def evaluate_lstm(model, dataloader, criterion, device):
     total_loss = 0.0
 
     with torch.no_grad():
-        for batch in dataloader:
-            inputs, targets, _ = unpack_batch(batch)
+        for inputs, targets in dataloader:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs, _ = model(inputs)
             loss = criterion(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
@@ -137,15 +121,12 @@ def evaluate_transformer(model, dataloader, criterion, device):
     total_loss = 0.0
     progress_bar = tqdm.tqdm(dataloader, desc="Validation", leave=False)
 
-    for step, batch in enumerate(progress_bar, start=1):
-        inputs, targets, emotion = unpack_batch(batch)
+    for step, (inputs, targets) in enumerate(progress_bar, start=1):
         inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
-        if emotion is not None:
-            emotion = emotion.to(device, non_blocking=True)
 
         with torch.no_grad():
             with autocast(device_type=device.type):
-                outputs = forward_transformer_batch(model, inputs, emotion)
+                outputs = model(inputs)
                 loss = criterion(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
         total_loss += loss.item()
         progress_bar.set_postfix(val_loss=f"{total_loss / step:.4f}")
@@ -175,8 +156,7 @@ def train_lstm(
         total_loss = 0.0
         progress_bar = tqdm.tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}")
 
-        for step, batch in enumerate(progress_bar, start=1):
-            inputs, targets, _ = unpack_batch(batch)
+        for step, (inputs, targets) in enumerate(progress_bar, start=1):
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
             outputs, _ = model(inputs)
@@ -230,6 +210,7 @@ def train_transformer(
     model,
     dataloader,
     val_dataloader,
+    model_name="transformer",
     num_epochs=10,
     lr=3e-4,
     warmup_ratio=0.1,
@@ -272,14 +253,11 @@ def train_transformer(
         total_loss = 0.0
         progress_bar = tqdm.tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}")
 
-        for step, batch in enumerate(progress_bar, start=1):
-            inputs, targets, emotion = unpack_batch(batch)
+        for step, (inputs, targets) in enumerate(progress_bar, start=1):
             inputs, targets = inputs.to(device, non_blocking=True), targets.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             with autocast(device_type=device.type):
-                if emotion is not None:
-                    emotion = emotion.to(device, non_blocking=True)
-                outputs = forward_transformer_batch(model, inputs, emotion)
+                outputs = model(inputs)
                 loss = criterion(outputs.reshape(-1, outputs.size(-1)), targets.reshape(-1))
             
             scaler.scale(loss).backward()
@@ -302,17 +280,17 @@ def train_transformer(
             f"Validation Loss: {val_loss_avg:.4f}, LR: {scheduler.get_last_lr()[0]:.2e}"
         )
         if (epoch + 1) % 5 == 0 or epoch == 0:
-            checkpoint_path = get_checkpoint_path("transformer_giantmidi", tokenizer_mode, epoch + 1)
+            checkpoint_path = get_checkpoint_path(model_name, tokenizer_mode, epoch + 1)
             torch.save(model.state_dict(), checkpoint_path)
             checkpoint_paths.append(checkpoint_path)
             
-    final_model_path = get_final_model_path("transformer_giantmidi", tokenizer_mode)
+    final_model_path = get_final_model_path(model_name, tokenizer_mode)
     torch.save(model.state_dict(), final_model_path)
-    plot_training_loss(epoch_losses, val_losses, "transformer_giantmidi", tokenizer_mode)
+    plot_training_loss(epoch_losses, val_losses, model_name, tokenizer_mode)
     metrics_metadata["final_learning_rate"] = scheduler.get_last_lr()[0]
 
     report = build_training_report(
-        model_name="transformer_giantmidi",
+        model_name=model_name,
         tokenizer_mode=tokenizer_mode,
         train_losses=epoch_losses,
         val_losses=val_losses,
@@ -322,8 +300,8 @@ def train_transformer(
         parameter_stats=count_model_parameters(model),
     )
     write_training_report(
-        json_path=get_metrics_json_path("transformer_giantmidi", tokenizer_mode),
-        csv_path=get_metrics_csv_path("transformer_giantmidi", tokenizer_mode),
+        json_path=get_metrics_json_path(model_name, tokenizer_mode),
+        csv_path=get_metrics_csv_path(model_name, tokenizer_mode),
         report=report,
     )
     return report

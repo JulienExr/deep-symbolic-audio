@@ -2,7 +2,7 @@ import math
 from collections import Counter
 from itertools import combinations
 
-from generate import tokens_to_pretty_midi_dispatch
+from symbolic.generate import tokens_to_pretty_midi_dispatch
 
 
 CONSONANT_INTERVAL_CLASSES = {3, 4, 5}

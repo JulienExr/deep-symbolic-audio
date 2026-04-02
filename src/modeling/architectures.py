@@ -17,7 +17,7 @@ class MusicLSTM(nn.Module):
 
 
 class MusicTransformer(nn.Module):
-    def __init__(self, vocab_size,d_model, n_heads, n_layers, d_ff, dropout, max_len, pad_token_id, emotion_mode=False):
+    def __init__(self, vocab_size, d_model, n_heads, n_layers, d_ff, dropout, max_len, pad_token_id):
         super(MusicTransformer, self).__init__()
         self.vocab_size = vocab_size
         self.d_model = d_model
@@ -25,11 +25,7 @@ class MusicTransformer(nn.Module):
         self.pad_token_id = pad_token_id
         self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=pad_token_id)
         self.pos_embedding = nn.Embedding(max_len, d_model)
-        if emotion_mode:
-            self.emotion_embedding = nn.Embedding(4, d_model)  # 4 émotions différentes
-        
         self.dropout = nn.Dropout(dropout)
-        self.emotion_mode = emotion_mode
         encoder_layer = nn.TransformerEncoderLayer(d_model=d_model,
                                                     nhead=n_heads,
                                                     dim_feedforward=d_ff,
@@ -43,11 +39,11 @@ class MusicTransformer(nn.Module):
 
         self.ln_f = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, vocab_size)
-        print(f"Model initialized : emotion_mode={emotion_mode}, vocab_size={vocab_size}, d_model={d_model}, n_heads={n_heads}, n_layers={n_layers}, d_ff={d_ff}, dropout={dropout}, max_len={max_len}")
+        print(f"Model initialized : vocab_size={vocab_size}, d_model={d_model}, n_heads={n_heads}, n_layers={n_layers}, d_ff={d_ff}, dropout={dropout}, max_len={max_len}")
     def _causal_mask(self, seq_len: int, device: torch.device):
         return torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1)
     
-    def forward(self, x, emotion=None):
+    def forward(self, x):
 
         batch_size, seq_len = x.shape   
         if seq_len > self.max_len:
@@ -57,9 +53,6 @@ class MusicTransformer(nn.Module):
 
         token_emb = self.embedding(x)
         pos = self.pos_embedding(positions)
-        if self.emotion_mode and emotion is not None:
-            emotion_emb = self.emotion_embedding(emotion).unsqueeze(1)
-            pos = pos + emotion_emb
         h = self.dropout(token_emb + pos)
 
         causal_mask = self._causal_mask(seq_len, x.device)
@@ -73,5 +66,5 @@ class MusicTransformer(nn.Module):
 def build_music_lstm(vocab_size, emb_dim=128, hidden_dim=256, num_layers=2, dropout=0.1):
     return MusicLSTM(vocab_size, emb_dim, hidden_dim, num_layers, dropout)
 
-def build_music_transformer(vocab_size, d_model=384, n_heads=6, n_layers=6, d_ff=1536, dropout=0.1, max_len=512, pad_token_id=0, emotion_mode=False):
-    return MusicTransformer(vocab_size, d_model, n_heads, n_layers, d_ff, dropout, max_len, pad_token_id, emotion_mode)
+def build_music_transformer(vocab_size, d_model=384, n_heads=6, n_layers=6, d_ff=1536, dropout=0.1, max_len=512, pad_token_id=0):
+    return MusicTransformer(vocab_size, d_model, n_heads, n_layers, d_ff, dropout, max_len, pad_token_id)

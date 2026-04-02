@@ -12,7 +12,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from generate import (
+from symbolic.generate import (
     DEFAULT_AUDIO_SAMPLE_RATE,
     find_available_soundfonts,
     generate_tokens,
@@ -23,12 +23,6 @@ from generate import (
 
 st.set_page_config(page_title="Deep Symbolic Audio UI", layout="wide")
 
-EMOPIA_START_TOKENS = {
-    "HAPPY": "START_HAPPY",
-    "SAD": "START_SAD",
-    "ANGRY": "START_ANGRY",
-    "RELAXED": "START_RELAXED",
-}
 UI_SOUNDFONT_DIR = ROOT_DIR / "assets" / "soundfonts"
 
 
@@ -45,8 +39,6 @@ def display_path(path):
 
 def infer_tokenizer_mode(checkpoint_path, fallback_mode):
     checkpoint_name = checkpoint_path.name.lower()
-    if "emopia" in checkpoint_name or "emotion" in checkpoint_name:
-        return "emopia"
     if "_poly_" in checkpoint_name or checkpoint_name.endswith("_poly.pt"):
         return "poly"
     if "_mono_" in checkpoint_name or checkpoint_name.endswith("_mono.pt"):
@@ -71,6 +63,9 @@ def find_checkpoints(model_name):
     unique_candidates = []
     seen = set()
     for path in candidates:
+        checkpoint_name = path.name.lower()
+        if "emopia" in checkpoint_name or "emotion" in checkpoint_name:
+            continue
         resolved = path.resolve()
         if resolved not in seen:
             unique_candidates.append(path)
@@ -92,7 +87,6 @@ def save_generation(
     tokens,
     model_name,
     tokenizer_mode,
-    selected_emotion=None,
     sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
     soundfont_path=None,
 ):
@@ -100,8 +94,7 @@ def save_generation(
     output_dir = ROOT_DIR / "outputs" / "ui_generations"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    emotion_suffix = f"_{selected_emotion.lower()}" if tokenizer_mode == "emopia" and selected_emotion else ""
-    midi_path = output_dir / f"{model_name}_{tokenizer_mode}{emotion_suffix}_{timestamp}.mid"
+    midi_path = output_dir / f"{model_name}_{tokenizer_mode}_{timestamp}.mid"
     tokens_to_midi(tokens, str(midi_path), tokenizer_mode=tokenizer_mode)
     wav_bytes, renderer_name = tokens_to_wav_bytes(
         tokens,
@@ -114,17 +107,17 @@ def save_generation(
 
 
 st.title("Deep Symbolic Audio")
-st.caption("Génère et écoute directement un fichier MIDI créé par le modèle, y compris les versions fine-tunées avec émotions.")
+st.caption("Génère et écoute directement un fichier MIDI créé par le modèle.")
 
 left_col, right_col = st.columns([1, 1])
 
 with left_col:
     model_name = st.selectbox("Modèle", ["lstm", "transformer", "transformer_giantmidi"])
-    tokenizer_mode = st.selectbox("Mode de tokens", ["mono", "poly", "emopia"])
+    tokenizer_mode = st.selectbox("Mode de tokens", ["mono", "poly"])
     available_checkpoints = find_checkpoints(model_name)
 
     if not available_checkpoints:
-        st.error(f"Aucun checkpoint trouvé pour {model_name} dans models/{model_name}/")
+        st.error(f"Aucun checkpoint compatible trouvé pour {model_name} dans models/{model_name}/")
         st.stop()
 
     checkpoint_path = st.selectbox(
@@ -133,12 +126,7 @@ with left_col:
         format_func=lambda path: str(path.relative_to(ROOT_DIR)),
     )
     effective_tokenizer_mode = infer_tokenizer_mode(checkpoint_path, tokenizer_mode)
-    selected_emotion = None
     start_token = None
-
-    if effective_tokenizer_mode == "emopia":
-        selected_emotion = st.selectbox("Emotion", list(EMOPIA_START_TOKENS.keys()))
-        start_token = EMOPIA_START_TOKENS[selected_emotion]
 
     max_tokens = st.slider("Nombre max de tokens", min_value=32, max_value=2048, value=200, step=8)
     temperature = st.slider("Température", min_value=0.1, max_value=1.5, value=1.0, step=0.1)
@@ -183,7 +171,6 @@ with right_col:
     else:
         st.warning("Aucun soundfont trouvé. L'UI utilisera le rendu de secours, plus synthétique.")
     if start_token is not None:
-        st.write(f"Emotion demandée: `{selected_emotion}`")
         st.write(f"Token de départ: `{start_token}`")
 
 
@@ -203,7 +190,6 @@ if generate_button:
             tokens,
             model_name,
             effective_tokenizer_mode,
-            selected_emotion=selected_emotion,
             sample_rate=sample_rate,
             soundfont_path=selected_soundfont_path,
         )

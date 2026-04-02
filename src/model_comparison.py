@@ -9,10 +9,9 @@ from pathlib import Path
 
 import torch
 
-from generate import (
+from symbolic.generate import (
     generate_lstm,
     generate_transformer,
-    get_emopia_emotion_id,
     load_generation_model,
     tokens_to_pretty_midi_dispatch,
 )
@@ -37,7 +36,7 @@ def build_parser():
     )
     parser.add_argument("checkpoints", nargs="+", help="Checkpoint(s) .pt a analyser.")
     parser.add_argument("--model-name", choices=["lstm", "transformer", "transformer_giantmidi"], default=None)
-    parser.add_argument("--tokenizer-mode", choices=["mono", "poly", "emopia"], default=None)
+    parser.add_argument("--tokenizer-mode", choices=["mono", "poly"], default=None)
     parser.add_argument("--device", default=None, help="cpu ou cuda")
     parser.add_argument("--seed", type=int, default=0, help="Seed de base pour la generation")
     parser.add_argument("--num-samples", type=int, default=4, help="Nombre d'echantillons generes par modele")
@@ -104,8 +103,6 @@ def infer_tokenizer_mode(checkpoint_path, explicit_mode=None):
         return explicit_mode
 
     checkpoint_name = checkpoint_path.name.lower()
-    if "emopia" in checkpoint_name or "emotion" in checkpoint_name:
-        return "emopia"
     if "_poly_" in checkpoint_name or checkpoint_name.endswith("_poly.pt"):
         return "poly"
     if "_mono_" in checkpoint_name or checkpoint_name.endswith("_mono.pt"):
@@ -140,12 +137,6 @@ def infer_model_name(checkpoint_path, explicit_name=None):
 
 
 def resolve_start_token(tokenizer_mode, token_to_id):
-    if tokenizer_mode == "emopia":
-        for candidate in ("START_HAPPY", "START_SAD", "START_ANGRY", "START_RELAXED"):
-            if candidate in token_to_id:
-                return candidate
-        raise ValueError("Aucun token START_* EMOPIA trouve dans le vocabulaire.")
-
     if "START" not in token_to_id:
         raise ValueError("Le vocabulaire ne contient pas le token START.")
     return "START"
@@ -197,10 +188,6 @@ def build_sampling_configs(args):
 def generate_tokens(model, model_name, tokenizer_mode, token_to_id, id_to_token, args, device, sampling_config):
     start_token = resolve_start_token(tokenizer_mode, token_to_id)
     start_token_id = token_to_id[start_token]
-    emotion_id = None
-
-    if tokenizer_mode == "emopia" and model_name in {"transformer", "transformer_giantmidi"}:
-        emotion_id = get_emopia_emotion_id(start_token, token_to_id)
 
     if model_name == "lstm":
         generated_ids = generate_lstm(
@@ -219,7 +206,6 @@ def generate_tokens(model, model_name, tokenizer_mode, token_to_id, id_to_token,
             max_tokens=args.max_tokens,
             temperature=sampling_config["temperature"],
             top_k=sampling_config["top_k"],
-            emotion_id=emotion_id,
             device=device,
         )
 
