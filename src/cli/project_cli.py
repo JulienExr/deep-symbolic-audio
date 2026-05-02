@@ -410,13 +410,17 @@ def run_fine_tuning(args, root_dir, device):
 
 
 def run_generation(args, root_dir, device):
-    from symbolic.generate import generate_tokens, tokens_to_midi
+    from symbolic.generate import generate_tokens, infer_generation_tokenizer_mode, tokens_to_midi
     from metrics import build_generation_report, save_json
 
     checkpoint_path = resolve_path(root_dir, args.checkpoint) if args.checkpoint else default_checkpoint_path(root_dir, args.model, args.tokenizer_mode)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Checkpoint introuvable: {checkpoint_path}")
 
+    effective_tokenizer_mode = infer_generation_tokenizer_mode(
+        checkpoint_path,
+        fallback_mode=args.tokenizer_mode,
+    )
     start_token = resolve_generation_start_token(args)
     generated_tokens = generate_tokens(
         model_name=args.model,
@@ -424,23 +428,24 @@ def run_generation(args, root_dir, device):
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         top_k=args.top_k,
-        tokenizer_mode=args.tokenizer_mode,
+        tokenizer_mode=effective_tokenizer_mode,
         start_token=start_token,
         device=device,
     )
 
     output_path = resolve_path(root_dir, args.output_midi)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    print(generated_tokens)
-    tokens_to_midi(generated_tokens, str(output_path), tokenizer_mode=args.tokenizer_mode)
+    tokens_to_midi(generated_tokens, str(output_path), tokenizer_mode=effective_tokenizer_mode)
 
     metrics_path = resolve_path(root_dir, args.metrics_output) if args.metrics_output else output_path.with_name(f"{output_path.stem}_metrics.json")
     generation_report = build_generation_report(
         generated_tokens,
-        tokenizer_mode=args.tokenizer_mode,
+        tokenizer_mode=effective_tokenizer_mode,
         metadata={
             "action": args.action,
             "model_name": args.model,
+            "requested_tokenizer_mode": args.tokenizer_mode,
+            "effective_tokenizer_mode": effective_tokenizer_mode,
             "checkpoint_path": str(checkpoint_path),
             "output_midi": str(output_path),
             "max_tokens": args.max_tokens,

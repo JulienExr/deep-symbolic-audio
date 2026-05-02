@@ -1,4 +1,5 @@
 import io
+import json
 import wave
 from pathlib import Path
 
@@ -6,12 +7,237 @@ import numpy as np
 import pretty_midi
 import torch
 
-from modeling.architectures import MusicLSTM, build_music_lstm, build_music_transformer
+from modeling.architectures import build_music_lstm, build_music_transformer
 from symbolic.tokenizer import build_vocab, build_vocab_polyphonic
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TIME_STEP = 0.05
 DEFAULT_AUDIO_SAMPLE_RATE = 44100
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed"
+SAVED_VOCAB_FILES = {
+    "mono": ["vocab_token_to_id.json", "vocab_test_token_to_id.json"],
+    "poly": ["vocab_poly_token_to_id.json", "vocab_giantmidi_token_to_id.json"],
+}
+
+
+def _extract_state_dict(checkpoint):
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        return checkpoint["model_state_dict"]
+    return checkpoint
+
+
+def _checkpoint_vocab_size(checkpoint_state):
+    for key in ("embedding.weight", "fc.weight", "head.weight"):
+        tensor = checkpoint_state.get(key)
+        if tensor is not None:
+            return tensor.shape[0]
+    raise ValueError("Impossible de trouver la taille du vocabulaire dans le checkpoint.")
+
+
+def _load_token_to_id(vocab_path):
+    with open(vocab_path, "r") as file:
+        raw_mapping = json.load(file)
+    return {token: int(index) for token, index in raw_mapping.items()}
+
+
+def _vocab_from_token_to_id(token_to_id):
+    ordered_tokens = sorted(token_to_id.items(), key=lambda item: item[1])
+    ids = [index for _, index in ordered_tokens]
+    if ids != list(range(len(ids))):
+        raise ValueError("Le vocabulaire n'est pas indexé de façon contigue à partir de 0.")
+
+    vocab = [token for token, _ in ordered_tokens]
+    id_to_token = {index: token for token, index in token_to_id.items()}
+    return vocab, token_to_id, id_to_token
+
+
+def _infer_tokenizer_mode_from_vocab(vocab):
+    if any(
+        token.startswith("NOTE_ON_")
+        or token.startswith("NOTE_OFF_")
+        or token.startswith("SHIFT_")
+        for token in vocab
+    ):
+        return "poly"
+    return "mono"
+
+
+def _candidate_mode_order(tokenizer_mode):
+    modes = []
+    if tokenizer_mode in {"mono", "poly"}:
+        modes.append(tokenizer_mode)
+    for mode in ("mono", "poly"):
+        if mode not in modes:
+            modes.append(mode)
+    return modes
+
+
+def _iter_saved_vocab_candidates():
+    seen_paths = set()
+    for declared_mode, filenames in SAVED_VOCAB_FILES.items():
+        for filename in filenames:
+            vocab_path = PROCESSED_DATA_DIR / filename
+            if not vocab_path.exists():
+                continue
+            seen_paths.add(vocab_path.resolve())
+            token_to_id = _load_token_to_id(vocab_path)
+            vocab, token_to_id, id_to_token = _vocab_from_token_to_id(token_to_id)
+            yield {
+                "vocab": vocab,
+                "token_to_id": token_to_id,
+                "id_to_token": id_to_token,
+                "tokenizer_mode": declared_mode,
+                "source": str(vocab_path),
+            }
+
+    if not PROCESSED_DATA_DIR.exists():
+        return
+
+    for vocab_path in sorted(PROCESSED_DATA_DIR.glob("*_token_to_id.json")):
+        if vocab_path.resolve() in seen_paths:
+            continue
+        token_to_id = _load_token_to_id(vocab_path)
+        vocab, token_to_id, id_to_token = _vocab_from_token_to_id(token_to_id)
+        yield {
+            "vocab": vocab,
+            "token_to_id": token_to_id,
+            "id_to_token": id_to_token,
+            "tokenizer_mode": _infer_tokenizer_mode_from_vocab(vocab),
+            "source": str(vocab_path),
+        }
+
+
+def _iter_generated_vocab_candidates():
+    for mode, builder in (("mono", build_vocab), ("poly", build_vocab_polyphonic)):
+        vocab, token_to_id, id_to_token = builder()
+        yield {
+            "vocab": vocab,
+            "token_to_id": token_to_id,
+            "id_to_token": id_to_token,
+            "tokenizer_mode": mode,
+            "source": f"generated:{mode}",
+        }
+
+
+def _ordered_vocab_candidates(tokenizer_mode):
+    candidates = list(_iter_saved_vocab_candidates()) + list(_iter_generated_vocab_candidates())
+    mode_rank = {mode: index for index, mode in enumerate(_candidate_mode_order(tokenizer_mode))}
+
+    indexed_candidates = list(enumerate(candidates))
+    return [
+        candidate
+        for _, candidate in sorted(
+            indexed_candidates,
+            key=lambda indexed_candidate: (
+                mode_rank.get(indexed_candidate[1]["tokenizer_mode"], len(mode_rank)),
+                1 if indexed_candidate[1]["source"].startswith("generated:") else 0,
+                indexed_candidate[0],
+            ),
+        )
+    ]
+
+
+def resolve_generation_vocab(tokenizer_mode="mono", checkpoint_state=None):
+    checkpoint_vocab_size = None
+    if checkpoint_state is not None:
+        checkpoint_vocab_size = _checkpoint_vocab_size(checkpoint_state)
+
+    candidates = _ordered_vocab_candidates(tokenizer_mode)
+    if checkpoint_vocab_size is None:
+        return candidates[0]
+
+    for candidate in candidates:
+        if len(candidate["vocab"]) == checkpoint_vocab_size:
+            return candidate
+
+    available_sizes = ", ".join(
+        f"{candidate['tokenizer_mode']}:{len(candidate['vocab'])} ({candidate['source']})"
+        for candidate in candidates
+    )
+    raise ValueError(
+        "Aucun vocabulaire de génération ne correspond au checkpoint "
+        f"({checkpoint_vocab_size} tokens). Tailles disponibles: {available_sizes}"
+    )
+
+
+def infer_generation_tokenizer_mode(checkpoint_path, fallback_mode="mono"):
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint_state = _extract_state_dict(checkpoint)
+    vocab_info = resolve_generation_vocab(
+        tokenizer_mode=fallback_mode,
+        checkpoint_state=checkpoint_state,
+    )
+    return vocab_info["tokenizer_mode"]
+
+
+def _infer_lstm_num_layers(checkpoint_state):
+    layer_indices = []
+    prefix = "lstm.weight_ih_l"
+    for key in checkpoint_state:
+        if not key.startswith(prefix):
+            continue
+        suffix = key[len(prefix):].split("_reverse", 1)[0]
+        if suffix.isdigit():
+            layer_indices.append(int(suffix))
+    return max(layer_indices) + 1 if layer_indices else 2
+
+
+def _infer_transformer_num_layers(checkpoint_state):
+    layer_indices = []
+    prefix = "transformer.layers."
+    for key in checkpoint_state:
+        if not key.startswith(prefix):
+            continue
+        parts = key.split(".")
+        if len(parts) > 2 and parts[2].isdigit():
+            layer_indices.append(int(parts[2]))
+    return max(layer_indices) + 1 if layer_indices else 6
+
+
+def _infer_transformer_heads(d_model):
+    preferred_heads = {384: 6, 256: 4}
+    preferred = preferred_heads.get(d_model)
+    if preferred is not None and d_model % preferred == 0:
+        return preferred
+
+    for n_heads in (8, 6, 4, 2, 1):
+        if d_model % n_heads == 0:
+            return n_heads
+    return 1
+
+
+def _build_model_for_checkpoint(model_name, vocab_size, token_to_id, checkpoint_state):
+    embedding = checkpoint_state.get("embedding.weight")
+    if embedding is None:
+        raise ValueError("Le checkpoint ne contient pas embedding.weight.")
+
+    if model_name == "lstm":
+        output_weight = checkpoint_state.get("fc.weight")
+        if output_weight is None:
+            raise ValueError("Le checkpoint LSTM ne contient pas fc.weight.")
+        return build_music_lstm(
+            vocab_size,
+            emb_dim=embedding.shape[1],
+            hidden_dim=output_weight.shape[1],
+            num_layers=_infer_lstm_num_layers(checkpoint_state),
+        )
+
+    if model_name in ["transformer", "transformer_giantmidi"]:
+        d_model = embedding.shape[1]
+        linear1_weight = checkpoint_state.get("transformer.layers.0.linear1.weight")
+        pos_embedding = checkpoint_state.get("pos_embedding.weight")
+        return build_music_transformer(
+            vocab_size,
+            d_model=d_model,
+            n_heads=_infer_transformer_heads(d_model),
+            n_layers=_infer_transformer_num_layers(checkpoint_state),
+            d_ff=linear1_weight.shape[0] if linear1_weight is not None else 1536,
+            max_len=pos_embedding.shape[0] if pos_embedding is not None else 512,
+            pad_token_id=token_to_id.get("PAD", 0),
+        )
+
+    raise ValueError(f"Unsupported model: {model_name}")
 
 
 def find_available_soundfonts():
@@ -369,22 +595,26 @@ def tokens_to_wav_bytes(
 
 
 def load_generation_model(model_name, checkpoint_path, tokenizer_mode="mono", device=device):
-    if tokenizer_mode == "poly":
-        vocab, token_to_id, id_to_token = build_vocab_polyphonic()
-    else:
-        vocab, token_to_id, id_to_token = build_vocab()
-    vocab_size = len(vocab)
-
-    checkpoint_state = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint_state = _extract_state_dict(checkpoint)
     if "emotion_embedding.weight" in checkpoint_state:
         raise ValueError("Les checkpoints EMOPIA/emotion ne sont plus supportes par ce projet.")
 
-    if model_name == "lstm":
-        model = build_music_lstm(vocab_size)
-    elif model_name in ["transformer", "transformer_giantmidi"]:
-        model = build_music_transformer(vocab_size)
-    else:
-        raise ValueError(f"Unsupported model: {model_name}")
+    vocab_info = resolve_generation_vocab(
+        tokenizer_mode=tokenizer_mode,
+        checkpoint_state=checkpoint_state,
+    )
+    vocab = vocab_info["vocab"]
+    token_to_id = vocab_info["token_to_id"]
+    id_to_token = vocab_info["id_to_token"]
+    vocab_size = len(vocab)
+
+    model = _build_model_for_checkpoint(
+        model_name=model_name,
+        vocab_size=vocab_size,
+        token_to_id=token_to_id,
+        checkpoint_state=checkpoint_state,
+    )
 
     model.load_state_dict(checkpoint_state)
     model.to(device)
@@ -434,15 +664,3 @@ def generate_tokens(
         )
 
     return [id_to_token[token_id] for token_id in generated_ids]
-
-
-if __name__ == "__main__":
-    vocab, token_to_id, id_to_token = build_vocab()
-    vocab_size = len(vocab)
-    model = MusicLSTM(vocab_size).to(device)
-    model.load_state_dict(torch.load("models/lstm_final.pt", map_location=device))
-    start_token_id = token_to_id["START"]
-    generated_ids = generate_lstm(model, start_token_id, id_to_token, max_tokens=200, temperature=0.8)
-    generated_tokens = [id_to_token[token_id] for token_id in generated_ids]
-    print(generated_tokens)
-    tokens_to_midi(generated_tokens, "outputs/generated_music.mid")

@@ -15,6 +15,7 @@ if str(SRC_DIR) not in sys.path:
 from symbolic.generate import (
     DEFAULT_AUDIO_SAMPLE_RATE,
     find_available_soundfonts,
+    infer_generation_tokenizer_mode,
     generate_tokens,
     tokens_to_midi,
     tokens_to_wav_bytes,
@@ -39,11 +40,19 @@ def display_path(path):
 
 def infer_tokenizer_mode(checkpoint_path, fallback_mode):
     checkpoint_name = checkpoint_path.name.lower()
+    filename_mode = None
     if "_poly_" in checkpoint_name or checkpoint_name.endswith("_poly.pt"):
-        return "poly"
+        filename_mode = "poly"
     if "_mono_" in checkpoint_name or checkpoint_name.endswith("_mono.pt"):
-        return "mono"
-    return fallback_mode
+        filename_mode = "mono"
+
+    try:
+        return infer_generation_tokenizer_mode(
+            checkpoint_path,
+            fallback_mode=filename_mode or fallback_mode,
+        )
+    except ValueError:
+        return filename_mode or fallback_mode
 
 
 def find_checkpoints(model_name):

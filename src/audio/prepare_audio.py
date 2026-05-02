@@ -1,18 +1,19 @@
 import hashlib
+import csv
 import os
 from pathlib import Path
-import csv
 
 try:
     from .audio_io import load_audio, save_waveform
 except ImportError:
     from audio_io import load_audio, save_waveform
 
+
 def find_audio_files(directory):
     audio_files = []
     for root, _, files in os.walk(directory):
         for file in files:
-            if file.endswith(('.mp3', '.wav', '.flac')):
+            if file.lower().endswith((".mp3", ".wav", ".flac")):
                 audio_files.append(os.path.join(root, file))
     return audio_files
 
@@ -23,22 +24,23 @@ def safe_stem_from_path(path: Path):
     stem = path.stem.replace(" ", "_")
     return f"{stem}_{digest}"
 
+
 def peak_normalize(wave_form, target_peak=0.95):
     peak = wave_form.abs().max()
     if peak > 0:
         wave_form = wave_form * (target_peak / peak)
-    
     return wave_form
+
 
 def split_into_segments(wave_form, sample_rate, segment_seconds):
     if wave_form.dim() != 2 or wave_form.shape[0] != 1:
         raise ValueError("Input wave_form must be a mono audio tensor of shape (1, num_samples).")
-    
+
     total_samples = wave_form.shape[1]
     segment_samples = int(segment_seconds * sample_rate)
     segments = []
-    num_segments = total_samples // segment_samples  
-    
+    num_segments = total_samples // segment_samples
+
     for i in range(num_segments):
         start = i * segment_samples
         end = start + segment_samples
@@ -47,27 +49,26 @@ def split_into_segments(wave_form, sample_rate, segment_seconds):
 
     return segments
 
+
 def seconds_from_samples(num_samples, sample_rate):
     return num_samples / sample_rate
 
 
 def main():
-    inpur_dir = Path("data/audio/2017")
+    input_dir = Path("data/audio/2017")
     output_dir = Path("data/audio/prepared")
     segment_dir = output_dir / "segments"
     metadata_file = output_dir / "metadata.csv"
     sample_rate = 32000
     segment_seconds = 5
 
-
-    if not inpur_dir.exists():
-        print(f"Input directory {inpur_dir} does not exist.")
+    if not input_dir.exists():
+        print(f"Input directory {input_dir} does not exist.")
         return
-    
 
-    audio_files = find_audio_files(inpur_dir)
+    audio_files = find_audio_files(input_dir)
     if not audio_files:
-        print(f"No audio files found in {inpur_dir}.")
+        print(f"No audio files found in {input_dir}.")
         return
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -103,7 +104,7 @@ def main():
                     "original_file": str(audio_path),
                     "segment_file": str(segment_path),
                     "start_time": seconds_from_samples(start_sample, sample_rate),
-                    "end_time": seconds_from_samples(end_sample, sample_rate)
+                    "end_time": seconds_from_samples(end_sample, sample_rate),
                 })
 
             total_segments += len(segments)
@@ -124,7 +125,6 @@ def main():
     print(f"Fichiers erreurs : {total_files_failed}")
     print(f"Segments sauvés  : {total_segments}")
     print(f"Metadata         : {metadata_file}")
-
 
 
 if __name__ == "__main__":

@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
-from typing import Optional
 
 import torch
 from transformers import AutoProcessor, EncodecModel
@@ -228,7 +227,7 @@ def main():
     model, checkpoint = load_checkpoint(checkpoint_path, device)
 
     print("[INFO] Loading EnCodec...")
-    processor, encodec_model, sample_rate = load_encodec(
+    _, encodec_model, sample_rate = load_encodec(
         model_name=args.model_name,
         device=device,
         bandwidth=args.bandwidth,

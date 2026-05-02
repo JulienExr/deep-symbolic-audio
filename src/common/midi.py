@@ -1,5 +1,5 @@
-import numpy as np
 import pretty_midi
+import numpy as np
 
 
 def notes_to_monophonic_grid(notes, time_step):
@@ -85,17 +85,3 @@ def load_polyphonic_notes(midi_path):
         notes.extend(instrument.notes)
     notes.sort(key=lambda n: n.start)
     return notes
-
-if __name__ == "__main__":
-    midi_path = "/home/julien/Documents/UQAC(nogit)/deep_learning/deep-symbolic-audio/data/midi_poly/MIDI-Unprocessed_01_R1_2006_01-09_ORIG_MID--AUDIO_01_R1_2006_01_Track01_wav.midi"
-
-    
-    notes = load_mono_note(midi_path)
-    print(f" Notes extraites du MIDI (format PrettyMIDI.Note):")
-    print(notes[:3])    
-
-    print("\n---\n")
-    
-    notes_mono = notes_to_monophonic_grid(notes, time_step=0.125)
-    print(f" Notes allignées sur la grille temporelle:")
-    print(notes_mono[:3])

@@ -39,7 +39,7 @@ class MusicTransformer(nn.Module):
 
         self.ln_f = nn.LayerNorm(d_model)
         self.head = nn.Linear(d_model, vocab_size)
-        print(f"Model initialized : vocab_size={vocab_size}, d_model={d_model}, n_heads={n_heads}, n_layers={n_layers}, d_ff={d_ff}, dropout={dropout}, max_len={max_len}")
+
     def _causal_mask(self, seq_len: int, device: torch.device):
         return torch.triu(torch.ones(seq_len, seq_len, device=device, dtype=torch.bool), diagonal=1)
     

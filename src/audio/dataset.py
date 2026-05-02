@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import List, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -13,7 +12,6 @@ def interleave_codebooks(codes):
 
 
 def build_training_windows(flat_tokens, seq_length, stride):
-
     if flat_tokens.dim() != 1:
         raise ValueError(f"Expected flat_tokens to be a 1D tensor, got {tuple(flat_tokens.shape)}")
 
@@ -32,6 +30,7 @@ def build_training_windows(flat_tokens, seq_length, stride):
         windows.append((start, end))
 
     return windows
+
 
 class EncodecTokenDataset(Dataset):
     def __init__(self, tokens_dir, seq_length, stride, preload=True):
@@ -145,7 +144,6 @@ class EncodecTokenDataset(Dataset):
             )
 
         return input_ids, target_ids
-
 
 
 
