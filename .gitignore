@@ -12,6 +12,7 @@ data/
 sujet/
 src/sandbox.py
 
+__init__.py
 models/
 outputs/
 checkpoints/
