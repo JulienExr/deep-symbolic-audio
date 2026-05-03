@@ -50,7 +50,6 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Seed.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 
-    # Hyperparamètres du modèle
     parser.add_argument("--vocab_size", type=int, required=True, help="Taille du vocabulaire.")
     parser.add_argument("--max_seq_len", type=int, default=2048)
     parser.add_argument("--d_model", type=int, default=384)
@@ -59,7 +58,6 @@ def parse_args():
     parser.add_argument("--d_ff", type=int, default=1536)
     parser.add_argument("--dropout", type=float, default=0.1)
 
-    # Options dataset
     parser.add_argument("--preload", action="store_true", help="Précharge les séquences en RAM.")
 
     return parser.parse_args()

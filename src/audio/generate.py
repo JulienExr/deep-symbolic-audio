@@ -35,7 +35,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Seed pour la génération.")
 
     return parser.parse_args()
-
+  # [1, 1, K, T]
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -58,7 +58,7 @@ def load_checkpoint(checkpoint_path, device):
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
-    return model, checkpoint
+    return model, checkpoint  # [1, 1, K, T]
 
 
 def load_encodec(model_name, device, bandwidth):
@@ -144,7 +144,7 @@ def decode_codes_with_encodec(codes, encodec_model, device):
             "(for example facebook/encodec_32khz)."
         )
 
-    audio_codes = codes.unsqueeze(0).unsqueeze(0).to(device)  # [1, 1, K, T]
+    audio_codes = codes.unsqueeze(0).unsqueeze(0).to(device)
     audio_scales = [torch.ones((1, 1), device=device)]
 
     decoded = encodec_model.decode(audio_codes=audio_codes, audio_scales=audio_scales)
@@ -152,7 +152,7 @@ def decode_codes_with_encodec(codes, encodec_model, device):
     if not hasattr(decoded, "audio_values"):
         raise RuntimeError("The output of the EnCodec decode does not contain 'audio_values'")
 
-    waveform = decoded.audio_values[0].detach().cpu()  # [channels, samples]
+    waveform = decoded.audio_values[0].detach().cpu()
 
     return waveform
 
@@ -243,7 +243,7 @@ def main():
     print(f"[INFO] Prefix: {start_tokens_flat.numel()} tokens")
     print(f"[INFO] Number of codebooks: {num_codebooks}")
 
-    start_tokens = start_tokens_flat.unsqueeze(0).to(device)  # [1, T_start]
+    start_tokens = start_tokens_flat.unsqueeze(0).to(device)
 
     print(f"[INFO] Generating {args.max_new_tokens} new tokens...")
     generated = model.generate(

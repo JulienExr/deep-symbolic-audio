@@ -536,7 +536,7 @@ def render_midi_audio(midi, sample_rate=DEFAULT_AUDIO_SAMPLE_RATE, soundfont_pat
 
     if soundfont_path is not None:
         try:
-            import fluidsynth  # noqa: F401
+            import fluidsynth
 
             audio = midi.fluidsynth(fs=sample_rate, synthesizer=str(soundfont_path))
             return np.asarray(audio, dtype=np.float32), f"FluidSynth ({soundfont_path.name})"

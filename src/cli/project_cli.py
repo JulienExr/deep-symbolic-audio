@@ -5,7 +5,7 @@ from pathlib import Path
 
 try:
     import numpy as np
-except ImportError:  # pragma: no cover - numpy is available in this project, this is defensive.
+except ImportError:
     np = None
 
 

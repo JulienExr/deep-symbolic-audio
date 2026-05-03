@@ -24,7 +24,6 @@ def build_training_windows(flat_tokens, seq_length, stride):
     total_length = flat_tokens.size(0)
     windows = []
 
-    # A next-token target needs one extra token beyond the input window.
     for start in range(0, total_length - seq_length, stride):
         end = start + seq_length
         windows.append((start, end))

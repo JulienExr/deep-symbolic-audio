@@ -9,7 +9,7 @@ from common.midi import notes_to_monophonic_grid, save_monophonic_midi
 DATA_RAW_DIR = "data/raw_midi/maestro-v3.0.0/"
 DATA_PROCESSED_DIR = "data/midi_mono/"
 
-TIME_STEP = 0.125  # secondes
+TIME_STEP = 0.125
 
 
 

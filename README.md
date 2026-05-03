@@ -42,18 +42,6 @@ Notes :
 - `src/metrics.py` : rapports JSON/CSV pour l'entraînement, le fine-tuning et la génération
 - `UI/app.py` : interface Streamlit
 
-Les anciens wrappers plats `src/tokenizer.py`, `src/train.py`, `src/generate.py`, etc. ont été supprimés. La compatibilité est maintenue pour les points d'entrée du repo (`main.py`, `UI/app.py`), mais les imports Python historiques doivent maintenant viser les nouveaux modules namespacés.
-
-Exemples de migration d'imports :
-
-- `from symbolic.tokenizer import ...`
-- `from symbolic.generate import ...`
-- `from training.train import ...`
-- `from training.fine_tune import ...`
-- `from modeling.architectures import ...`
-- `from dataio.dataset import ...`
-- `from common.midi import ...`
-
 ## Modes de tokenisation
 
 - `mono` : suite de tokens `NOTE_x`, `DUR_x`, `REST_x`
@@ -61,7 +49,7 @@ Exemples de migration d'imports :
 
 ## Préparation des données
 
-La préparation des datasets est maintenant exposée dans la CLI via `main.py preprocess`. Les fonctions sous-jacentes restent dans `src/symbolic/tokenizer.py`.
+La préparation des datasets est exposée dans la CLI via `main.py preprocess`.
 
 Commande générale :
 
@@ -90,7 +78,7 @@ Sorties générées :
 - dataset(s) `.pt` dans `data/processed/`
 - vocabulaires JSON `*_token_to_id.json` et `*_id_to_token.json`
 
-Comportement actuel par mode :
+Comportement par mode :
 
 - `mono` : produit un seul fichier dataset, par exemple `data/processed/dataset.pt`
 - `poly` : produit un split train/validation, par exemple `dataset_poly_train.pt` et `dataset_poly_val.pt`

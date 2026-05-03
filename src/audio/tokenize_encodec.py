@@ -115,19 +115,15 @@ def encode_audio(wave_form, processor, model, sample_rate):
     audio_scales = getattr(encoded, "audio_scales", None)
 
     if audio_codes.dim() == 4:
-        # souvent [frames, batch, codebooks, seq]
         if audio_codes.size(0) != 1:
             raise ValueError(
                 f"Nombre de frames inattendu ({audio_codes.size(0)}). "
                 "Pour ce script on attend 1 frame logique côté sortie encode."
             )
         codes = audio_codes[0, 0]  
-        # [num_codebooks, seq]
     elif audio_codes.dim() == 3:
-        # souvent [batch, codebooks, seq]
         codes = audio_codes[0]
     elif audio_codes.dim() == 2:
-        # déjà [codebooks, seq] ou [1, seq]
         codes = audio_codes
     else:
         raise ValueError(f"Shape audio_codes non gérée: {tuple(audio_codes.shape)}")

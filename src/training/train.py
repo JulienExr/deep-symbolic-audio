@@ -305,10 +305,3 @@ def train_transformer(
         report=report,
     )
     return report
-
-if __name__ == "__main__":
-    dataloader = load_dataloaders("data/processed/dataset.pt", batch_size=256)
-    vocab, _, _ = build_vocab()
-    vocab_size = len(vocab)
-    model = MusicLSTM(vocab_size)
-    train_lstm(model, dataloader, num_epochs=20, lr=8e-4)
